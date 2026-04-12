@@ -1,0 +1,27 @@
+{
+  "name": "homeofficebot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Slack bot for daily home office voting",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "send-now": "tsx src/sendNow.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "dependencies": {
+    "@slack/bolt": "^4.5.0",
+    "dotenv": "^16.6.1",
+    "node-cron": "^4.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.3"
+  }
+}
