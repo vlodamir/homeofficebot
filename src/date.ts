@@ -4,7 +4,7 @@ function pad(value: number): string {
   return String(value).padStart(2, "0");
 }
 
-export function formatIsoDate(parts: Omit<LocalDateParts, "isoDate">): string {
+export function formatIsoDate(parts: { year: number; month: number; day: number }): string {
   return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
 }
 
@@ -23,6 +23,8 @@ export function parseIsoDate(isoDate: string): LocalDateParts {
     year,
     month,
     day,
+    hour: 0,
+    minute: 0,
     isoDate,
   };
 }
@@ -33,6 +35,9 @@ export function getLocalDateInTimeZone(date: Date, timeZone: string): LocalDateP
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
   });
 
   const parts = formatter.formatToParts(date);
@@ -40,11 +45,15 @@ export function getLocalDateInTimeZone(date: Date, timeZone: string): LocalDateP
   const year = Number.parseInt(values.year, 10);
   const month = Number.parseInt(values.month, 10);
   const day = Number.parseInt(values.day, 10);
+  const hour = Number.parseInt(values.hour, 10);
+  const minute = Number.parseInt(values.minute, 10);
 
   return {
     year,
     month,
     day,
+    hour,
+    minute,
     isoDate: formatIsoDate({ year, month, day }),
   };
 }
@@ -57,6 +66,8 @@ export function getTomorrowInTimeZone(date: Date, timeZone: string): LocalDatePa
     year: tomorrow.getUTCFullYear(),
     month: tomorrow.getUTCMonth() + 1,
     day: tomorrow.getUTCDate(),
+    hour: 0,
+    minute: 0,
     isoDate: formatIsoDate({
       year: tomorrow.getUTCFullYear(),
       month: tomorrow.getUTCMonth() + 1,

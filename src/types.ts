@@ -23,6 +23,8 @@ export interface LocalDateParts {
   year: number;
   month: number;
   day: number;
+  hour: number;
+  minute: number;
   isoDate: string;
 }
 
