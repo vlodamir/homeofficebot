@@ -115,11 +115,11 @@ async function resolveUserDisplayName(app: App, userId: string): Promise<string>
   try {
     const response = await app.client.users.info({ user: userId });
     const profile = response.user?.profile;
-    const displayName = profile?.display_name?.trim();
     const realName = profile?.real_name?.trim();
+    const displayName = profile?.display_name?.trim();
     const username = response.user?.name?.trim();
 
-    return displayName || realName || username || userId;
+    return realName || displayName || username || userId;
   } catch (error) {
     logger.warn("Failed to resolve user info, falling back to user ID", { userId, error });
     return userId;
