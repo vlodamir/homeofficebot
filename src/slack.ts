@@ -1,14 +1,21 @@
 import { App } from "@slack/bolt";
-import { WebClient } from "@slack/web-api";
 import { buildHoMessageText } from "./hoMessage";
 import { logger } from "./logger";
 import { StateStore } from "./state";
 import { AppConfig, HOMessageState, RuntimeContext } from "./types";
 import { getCzechWeekdayNameFromIso } from "./date";
 
-type SlackMessage = Awaited<ReturnType<WebClient["conversations.history"]>>["messages"] extends Array<infer T>
-  ? T
-  : never;
+interface SlackReaction {
+  name?: string;
+  users?: string[];
+  count?: number;
+}
+
+interface SlackMessage {
+  ts?: string;
+  text?: string;
+  reactions?: SlackReaction[];
+}
 
 const POSITIVE_REACTION = "white_check_mark";
 
