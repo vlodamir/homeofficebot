@@ -104,3 +104,31 @@ export function isWeekendLocalDateParts(parts: LocalDateParts): boolean {
 
   return dayOfWeek === 0 || dayOfWeek === 6;
 }
+
+export function isSaturdayLocalDateParts(parts: LocalDateParts): boolean {
+  const utcDate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  const dayOfWeek = utcDate.getUTCDay();
+
+  return dayOfWeek === 6;
+}
+
+export function getMondayOfWeek(parts: LocalDateParts): LocalDateParts {
+  const utcDate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  const dayOfWeek = utcDate.getUTCDay();
+  const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Monday is 1, so subtract accordingly
+  const monday = new Date(utcDate);
+  monday.setUTCDate(utcDate.getUTCDate() - daysToSubtract);
+
+  return {
+    year: monday.getUTCFullYear(),
+    month: monday.getUTCMonth() + 1,
+    day: monday.getUTCDate(),
+    hour: 0,
+    minute: 0,
+    isoDate: formatIsoDate({
+      year: monday.getUTCFullYear(),
+      month: monday.getUTCMonth() + 1,
+      day: monday.getUTCDate(),
+    }),
+  };
+}

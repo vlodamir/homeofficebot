@@ -3,7 +3,7 @@ import { buildHoMessageText } from "./hoMessage";
 import { logger } from "./logger";
 import { StateStore } from "./state";
 import { AppConfig, HOMessageState, RuntimeContext } from "./types";
-import { getCzechWeekdayNameFromIso } from "./date";
+import { getCzechWeekdayNameFromIso, getLocalDateInTimeZone, getMondayOfWeek } from "./date";
 
 interface SlackReaction {
   name?: string;
@@ -126,6 +126,13 @@ async function resolveUserDisplayName(app: App, userId: string): Promise<string>
   }
 }
 
+export async function getApprovedUserIds(message: SlackMessage, botUserId: string): Promise<string[]> {
+  const users =
+    message.reactions?.find((reaction) => reaction.name === POSITIVE_REACTION)?.users?.filter((userId) => userId !== botUserId) ?? [];
+
+  return Array.from(new Set(users));
+}
+
 export async function getApprovedUsers(app: App, message: SlackMessage, botUserId: string): Promise<string[]> {
   const users =
     message.reactions?.find((reaction) => reaction.name === POSITIVE_REACTION)?.users?.filter((userId) => userId !== botUserId) ?? [];
@@ -136,7 +143,7 @@ export async function getApprovedUsers(app: App, message: SlackMessage, botUserI
   return names.sort((left, right) => left.localeCompare(right, "cs"));
 }
 
-export async function syncTrackedHoMessage(app: App, stateStore: StateStore, runtime: RuntimeContext): Promise<void> {
+export async function syncTrackedHoMessage(app: App, stateStore: StateStore, runtime: RuntimeContext, config?: AppConfig): Promise<void> {
   const trackedMessage = stateStore.getLastHoMessage();
 
   if (!trackedMessage) {
@@ -151,8 +158,30 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
     return;
   }
 
-  const approvedUsers = await getApprovedUsers(app, message, runtime.botUserId);
-  const updatedText = buildHoMessageText(getCzechWeekdayNameFromIso(trackedMessage.targetDate), approvedUsers);
+  // Get user IDs and resolve to display names
+  const approvedUserIds = await getApprovedUserIds(message, runtime.botUserId);
+  const approvedUserNames = await Promise.all(
+    approvedUserIds.map((userId) => resolveUserDisplayName(app, userId))
+  );
+  const sortedUserNames = approvedUserNames.sort((left, right) => left.localeCompare(right, "cs"));
+
+  // Determine which users to highlight (> 2 HOs this week)
+  let highlightedNames: string[] = [];
+  if (config) {
+    const weeklyTracking = stateStore.getWeeklyTracking();
+    if (weeklyTracking) {
+      const localDate = getLocalDateInTimeZone(new Date(), config.timezone);
+      const mondayOfWeek = getMondayOfWeek(localDate);
+      if (weeklyTracking.weekStart === mondayOfWeek.isoDate) {
+        highlightedNames = sortedUserNames.filter((name, index) => {
+          const userId = approvedUserIds[approvedUserNames.indexOf(name)];
+          return (weeklyTracking.userHoCounts[userId] ?? 0) > 2;
+        });
+      }
+    }
+  }
+
+  const updatedText = buildHoMessageText(getCzechWeekdayNameFromIso(trackedMessage.targetDate), sortedUserNames, highlightedNames);
 
   await app.client.chat.update({
     channel: trackedMessage.channelId,
@@ -160,7 +189,7 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
     text: updatedText,
   });
 
-  if (approvedUsers.length > 0) {
+  if (sortedUserNames.length > 0) {
     await removeBotReactionIfPresent(app, trackedMessage.channelId, trackedMessage.messageTs);
   } else {
     await addReactionIfPossible(app, trackedMessage.channelId, trackedMessage.messageTs, POSITIVE_REACTION);
@@ -169,11 +198,44 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
   logger.info("Tracked HO message synchronized", {
     channelId: trackedMessage.channelId,
     messageTs: trackedMessage.messageTs,
-    approvedUsersCount: approvedUsers.length,
+    approvedUsersCount: sortedUserNames.length,
+    highlightedUsersCount: highlightedNames.length,
   });
 }
 
-export function registerReactionHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext): void {
+async function trackHoReaction(stateStore: StateStore, config: AppConfig, userId: string): Promise<void> {
+  const now = new Date();
+  const localDate = getLocalDateInTimeZone(now, config.timezone);
+  const mondayOfWeek = getMondayOfWeek(localDate);
+
+  try {
+    await stateStore.incrementWeeklyHoCount(mondayOfWeek.isoDate, userId);
+    logger.info("Tracked HO for user", {
+      userId,
+      weekStart: mondayOfWeek.isoDate,
+    });
+  } catch (error) {
+    logger.error("Failed to track HO reaction", error);
+  }
+}
+
+async function untrackHoReaction(stateStore: StateStore, config: AppConfig, userId: string): Promise<void> {
+  const now = new Date();
+  const localDate = getLocalDateInTimeZone(now, config.timezone);
+  const mondayOfWeek = getMondayOfWeek(localDate);
+
+  try {
+    await stateStore.decrementWeeklyHoCount(mondayOfWeek.isoDate, userId);
+    logger.info("Untracked HO for user", {
+      userId,
+      weekStart: mondayOfWeek.isoDate,
+    });
+  } catch (error) {
+    logger.error("Failed to untrack HO reaction", error);
+  }
+}
+
+export function registerReactionHandlers(app: App, config: AppConfig, stateStore: StateStore, runtime: RuntimeContext): void {
   app.event("reaction_added", async ({ event }) => {
 
     if (event.reaction !== POSITIVE_REACTION || event.item.type !== "message") {
@@ -191,7 +253,8 @@ export function registerReactionHandlers(app: App, stateStore: StateStore, runti
     }
 
     try {
-      await syncTrackedHoMessage(app, stateStore, runtime);
+      await trackHoReaction(stateStore, config, event.user);
+      await syncTrackedHoMessage(app, stateStore, runtime, config);
     } catch (error) {
       logger.error("Failed to sync HO message after reaction_added", error);
     }
@@ -214,7 +277,8 @@ export function registerReactionHandlers(app: App, stateStore: StateStore, runti
     }
 
     try {
-      await syncTrackedHoMessage(app, stateStore, runtime);
+      await untrackHoReaction(stateStore, config, event.user);
+      await syncTrackedHoMessage(app, stateStore, runtime, config);
     } catch (error) {
       logger.error("Failed to sync HO message after reaction_removed", error);
     }

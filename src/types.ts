@@ -15,8 +15,14 @@ export interface HOMessageState {
   postedAt: string;
 }
 
+export interface WeeklyHoTracking {
+  weekStart: string; // ISO date of Monday of that week
+  userHoCounts: Record<string, number>; // user display name -> count
+}
+
 export interface StoredState {
   lastHoMessage: HOMessageState | null;
+  weeklyTracking: WeeklyHoTracking | null;
 }
 
 export interface LocalDateParts {
