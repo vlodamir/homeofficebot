@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { logger } from "./logger";
-import { HOMessageState, StoredState } from "./types";
+import { HOMessageState, StoredState, WeeklyHoTracking } from "./types";
 
 const DEFAULT_STATE: StoredState = {
   lastHoMessage: null,
+  weeklyTracking: null,
 };
 
 export class StateStore {
@@ -19,6 +20,7 @@ export class StateStore {
 
       this.state = {
         lastHoMessage: parsed.lastHoMessage ?? null,
+        weeklyTracking: parsed.weeklyTracking ?? null,
       };
 
       logger.info("State loaded", this.state);
@@ -42,7 +44,78 @@ export class StateStore {
 
   async setLastHoMessage(message: HOMessageState | null): Promise<void> {
     this.state = {
+      ...this.state,
       lastHoMessage: message,
+    };
+
+    await this.save();
+  }
+
+  getWeeklyTracking(): WeeklyHoTracking | null {
+    return this.state.weeklyTracking;
+  }
+
+  async setWeeklyTracking(tracking: WeeklyHoTracking | null): Promise<void> {
+    this.state = {
+      ...this.state,
+      weeklyTracking: tracking,
+    };
+
+    await this.save();
+  }
+
+  async incrementWeeklyHoCount(weekStart: string, userName: string): Promise<void> {
+    let tracking = this.state.weeklyTracking;
+
+    if (!tracking || tracking.weekStart !== weekStart) {
+      tracking = {
+        weekStart,
+        userHoCounts: {},
+      };
+    }
+
+    tracking.userHoCounts[userName] = (tracking.userHoCounts[userName] ?? 0) + 1;
+
+    this.state = {
+      ...this.state,
+      weeklyTracking: tracking,
+    };
+
+    await this.save();
+  }
+
+  async decrementWeeklyHoCount(weekStart: string, userName: string): Promise<void> {
+    let tracking = this.state.weeklyTracking;
+
+    if (!tracking || tracking.weekStart !== weekStart) {
+      logger.warn("Attempted to decrement HO count for non-existent week", {
+        weekStart,
+        userName,
+      });
+      return;
+    }
+
+    const currentCount = tracking.userHoCounts[userName] ?? 0;
+
+    if (currentCount <= 0) {
+      logger.warn("Attempted to decrement HO count below zero", {
+        weekStart,
+        userName,
+        currentCount,
+      });
+      return;
+    }
+
+    tracking.userHoCounts[userName] = currentCount - 1;
+
+    // Remove user from tracking if count reaches zero
+    if (tracking.userHoCounts[userName] === 0) {
+      delete tracking.userHoCounts[userName];
+    }
+
+    this.state = {
+      ...this.state,
+      weeklyTracking: tracking,
     };
 
     await this.save();

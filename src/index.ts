@@ -6,6 +6,7 @@ import { StateStore } from "./state";
 import { getLocalDateInTimeZone } from "./date";
 import { AppConfig, RuntimeContext } from "./types";
 import { App } from "@slack/bolt";
+import { startWeeklyStatsScheduler } from "./weeklyStats";
 
 async function runStartupCatchUp(app: App, config: AppConfig, stateStore: StateStore, runtime: RuntimeContext): Promise<void> {
   const now = new Date();
@@ -34,10 +35,11 @@ async function main(): Promise<void> {
   const botUserId = await resolveBotUserId(app);
   const runtime = { botUserId };
 
-  registerReactionHandlers(app, stateStore, runtime);
+  registerReactionHandlers(app, config, stateStore, runtime);
 
   await app.start();
   startScheduler(app, config, stateStore, runtime);
+  startWeeklyStatsScheduler(app, config, stateStore);
   await runStartupCatchUp(app, config, stateStore, runtime);
 
   logger.info("Slack HO bot is running", {
