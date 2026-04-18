@@ -1,7 +1,7 @@
 import { loadConfig } from "./config";
 import { logger } from "./logger";
 import { publishScheduledHoMessage, startScheduler } from "./scheduler";
-import { createSlackApp, registerGlobalErrorHandler, registerReactionHandlers, resolveBotUserId } from "./slack";
+import { createSlackApp, registerGlobalErrorHandler, registerButtonHandlers, registerPlannedOOOHandlers, resolveBotUserId } from "./slack";
 import { StateStore } from "./state";
 import { getLocalDateInTimeZone } from "./date";
 import { AppConfig, RuntimeContext } from "./types";
@@ -34,7 +34,8 @@ async function main(): Promise<void> {
   const botUserId = await resolveBotUserId(app);
   const runtime = { botUserId };
 
-  registerReactionHandlers(app, stateStore, runtime);
+  registerButtonHandlers(app, stateStore, runtime, config.teamMembers);
+  registerPlannedOOOHandlers(app, stateStore, runtime, config.teamMembers);
 
   await app.start();
   startScheduler(app, config, stateStore, runtime);

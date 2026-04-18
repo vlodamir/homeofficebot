@@ -5,7 +5,7 @@ import { logger } from "./logger";
 import { StateStore } from "./state";
 import { AppConfig, RuntimeContext } from "./types";
 import { App } from "@slack/bolt";
-import { addDefaultReactions, postHoMessage } from "./slack";
+import { postHoMessage } from "./slack";
 
 export async function publishScheduledHoMessage(
   app: App,
@@ -32,8 +32,7 @@ export async function publishScheduledHoMessage(
   }
 
   try {
-    const trackedMessage = await postHoMessage(app, config.slackChannelId, targetDate);
-    await addDefaultReactions(app, trackedMessage.channelId, trackedMessage.messageTs);
+    const trackedMessage = await postHoMessage(app, config.slackChannelId, targetDate, config.teamMembers, stateStore);
     await stateStore.setLastHoMessage(trackedMessage);
 
     logger.info("Scheduled HO message published", {

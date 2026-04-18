@@ -6,6 +6,14 @@ export interface AppConfig {
   postHour: number;
   postMinute: number;
   stateFilePath: string;
+  teamMembers: string[];
+}
+
+export interface PlannedOutOfOffice {
+  userId: string;
+  type: "ho" | "vacation";
+  startDate: string; // ISO date YYYY-MM-DD
+  endDate?: string; // ISO date YYYY-MM-DD, optional
 }
 
 export interface HOMessageState {
@@ -13,10 +21,13 @@ export interface HOMessageState {
   messageTs: string;
   targetDate: string;
   postedAt: string;
+  hoUsers?: string[];
+  vacationUsers?: string[];
 }
 
 export interface StoredState {
   lastHoMessage: HOMessageState | null;
+  plannedOutOfOffice: PlannedOutOfOffice[];
 }
 
 export interface LocalDateParts {

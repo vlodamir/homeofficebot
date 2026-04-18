@@ -1,27 +1,9 @@
 import { App } from "@slack/bolt";
-import { buildHoMessageText } from "./hoMessage";
+import { buildHoMessageBlocks } from "./hoMessage";
 import { logger } from "./logger";
 import { StateStore } from "./state";
-import { AppConfig, HOMessageState, RuntimeContext } from "./types";
+import { AppConfig, HOMessageState, RuntimeContext, PlannedOutOfOffice } from "./types";
 import { getCzechWeekdayNameFromIso } from "./date";
-
-interface SlackReaction {
-  name?: string;
-  users?: string[];
-  count?: number;
-}
-
-interface SlackMessage {
-  ts?: string;
-  text?: string;
-  reactions?: SlackReaction[];
-}
-
-const POSITIVE_REACTION = "white_check_mark";
-
-function isKnownSlackError(error: unknown): error is { data?: { error?: string } } {
-  return typeof error === "object" && error !== null;
-}
 
 export function createSlackApp(config: AppConfig): App {
   return new App({
@@ -41,13 +23,56 @@ export async function resolveBotUserId(app: App): Promise<string> {
   return response.user_id;
 }
 
-export async function postHoMessage(app: App, channelId: string, targetDate: string): Promise<HOMessageState> {
+export async function postHoMessage(app: App, channelId: string, targetDate: string, teamMemberIds: string[] = [], stateStore?: StateStore): Promise<HOMessageState> {
   const dayName = getCzechWeekdayNameFromIso(targetDate);
-  const text = buildHoMessageText(dayName, []);
+  const teamMemberNames = await resolveTeamMemberNames(app, teamMemberIds);
+  
+  let plannedHoNames: string[] = [];
+  let plannedVacationNames: string[] = [];
+  let inOfficeNames = teamMemberNames;
+  
+  // Filter out planned out of office entries if stateStore is provided
+  if (stateStore) {
+    const plannedEntries = stateStore.getPlannedOutOfOffice();
+    const plannedHoEntries = plannedEntries.filter(
+      (entry) => entry.type === "ho" && isDateInRange(targetDate, entry.startDate, entry.endDate)
+    );
+    const plannedVacationEntries = plannedEntries.filter(
+      (entry) => entry.type === "vacation" && isDateInRange(targetDate, entry.startDate, entry.endDate)
+    );
+    
+    // Get names for planned users with date ranges
+    for (const entry of plannedHoEntries) {
+      const name = await resolveUserDisplayName(app, entry.userId);
+      const dateRange = formatDateRange(entry.startDate, entry.endDate);
+      plannedHoNames.push(`${name} (${dateRange})`);
+    }
+    plannedHoNames.sort();
+    
+    for (const entry of plannedVacationEntries) {
+      const name = await resolveUserDisplayName(app, entry.userId);
+      const dateRange = formatDateRange(entry.startDate, entry.endDate);
+      plannedVacationNames.push(`${name} (${dateRange})`);
+    }
+    plannedVacationNames.sort();
+    
+    // Build a set of users with planned OOO
+    const plannedHoUserIds = new Set(plannedHoEntries.map(e => e.userId));
+    const plannedVacationUserIds = new Set(plannedVacationEntries.map(e => e.userId));
+    
+    // Filter in-office names to exclude planned OOO users
+    inOfficeNames = teamMemberNames.filter((name) => {
+      const userId = teamMemberIds[teamMemberNames.indexOf(name)];
+      return userId && !plannedHoUserIds.has(userId) && !plannedVacationUserIds.has(userId);
+    });
+  }
+  
+  const blocks = buildHoMessageBlocks(dayName, [], [], inOfficeNames, plannedHoNames, plannedVacationNames);
 
   const response = await app.client.chat.postMessage({
     channel: channelId,
-    text,
+    text: `HO ${dayName}`,
+    blocks,
   });
 
   if (!response.ts || !response.channel) {
@@ -60,55 +85,6 @@ export async function postHoMessage(app: App, channelId: string, targetDate: str
     targetDate,
     postedAt: new Date().toISOString(),
   };
-}
-
-export async function addDefaultReactions(app: App, channelId: string, messageTs: string): Promise<void> {
-  await addReactionIfPossible(app, channelId, messageTs, POSITIVE_REACTION);
-}
-
-async function removeBotReactionIfPresent(app: App, channelId: string, messageTs: string): Promise<void> {
-  try {
-    await app.client.reactions.remove({
-      channel: channelId,
-      timestamp: messageTs,
-      name: POSITIVE_REACTION,
-    });
-  } catch (error) {
-    if (isKnownSlackError(error) && error.data?.error === "no_reaction") {
-      return;
-    }
-    logger.warn("Failed to remove bot reaction", { error });
-  }
-}
-
-async function addReactionIfPossible(app: App, channelId: string, messageTs: string, reaction: string): Promise<void> {
-  try {
-    await app.client.reactions.add({
-      channel: channelId,
-      timestamp: messageTs,
-      name: reaction,
-    });
-  } catch (error) {
-    if (isKnownSlackError(error) && error.data?.error === "already_reacted") {
-      logger.warn("Reaction already exists on message", { channelId, messageTs, reaction });
-      return;
-    }
-
-    throw error;
-  }
-}
-
-export async function fetchTrackedMessage(app: App, channelId: string, messageTs: string): Promise<SlackMessage | null> {
-  const response = await app.client.conversations.history({
-    channel: channelId,
-    inclusive: true,
-    latest: messageTs,
-    oldest: messageTs,
-    limit: 1,
-  });
-
-  const message = response.messages?.find((item) => item.ts === messageTs) ?? null;
-  return message;
 }
 
 async function resolveUserDisplayName(app: App, userId: string): Promise<string> {
@@ -126,17 +102,121 @@ async function resolveUserDisplayName(app: App, userId: string): Promise<string>
   }
 }
 
-export async function getApprovedUsers(app: App, message: SlackMessage, botUserId: string): Promise<string[]> {
-  const users =
-    message.reactions?.find((reaction) => reaction.name === POSITIVE_REACTION)?.users?.filter((userId) => userId !== botUserId) ?? [];
+async function resolveTeamMemberNames(app: App, teamMemberIds: string[]): Promise<string[]> {
+  const names = await Promise.all(teamMemberIds.map((userId) => resolveUserDisplayName(app, userId)));
+  return names.sort((left, right) => left.localeCompare(right, "cs"));
+}
 
-  const uniqueUsers = Array.from(new Set(users));
+function isDateInRange(targetDate: string, startDate: string, endDate?: string): boolean {
+  if (targetDate < startDate) {
+    return false;
+  }
+  if (endDate && targetDate > endDate) {
+    return false;
+  }
+  return true;
+}
+
+function formatDateRange(startDate: string, endDate?: string): string {
+  const start = new Date(startDate + "T00:00:00");
+  const end = endDate ? new Date(endDate + "T00:00:00") : start;
+
+  const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "short" });
+  const dayFormatter = new Intl.DateTimeFormat("en-US", { day: "numeric" });
+
+  const startMonth = monthFormatter.format(start);
+  const startDay = dayFormatter.format(start);
+  const endMonth = monthFormatter.format(end);
+  const endDay = dayFormatter.format(end);
+
+  // No end date - show "since [date]" to indicate it's ongoing
+  if (!endDate) {
+    return `since ${startMonth} ${startDay}`;
+  }
+
+  if (startDate === endDate) {
+    return `${startMonth} ${startDay}`;
+  }
+
+  if (startMonth === endMonth) {
+    return `${startMonth} ${startDay}-${endDay}`;
+  }
+
+  return `${startMonth} ${startDay} - ${endMonth} ${endDay}`;
+}
+
+function buildPlannedOOOModal(userId: string, plannedEntries: PlannedOutOfOffice[]): any[] {
+  const blocks: any[] = [];
+
+  if (plannedEntries.length === 0) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "No planned out of office entries.",
+      },
+    });
+  } else {
+    plannedEntries.forEach((entry, index) => {
+      if (entry.userId !== userId) {
+        return; // Only show entries for the current user
+      }
+
+      const typeLabel = entry.type === "ho" ? "🏠 Home Office" : "🏝️ Vacation";
+      const endDateText = entry.endDate ? ` → ${entry.endDate}` : "";
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `${typeLabel}\n_${entry.startDate}${endDateText}_`,
+        },
+        accessory: {
+          type: "button",
+          text: {
+            type: "plain_text",
+            text: "Remove",
+          },
+          value: String(index),
+          action_id: `remove_planned_${index}`,
+          style: "danger",
+        },
+      });
+    });
+  }
+
+  blocks.push({
+    type: "actions",
+    elements: [
+      {
+        type: "button",
+        text: {
+          type: "plain_text",
+          text: "+ Add Entry",
+        },
+        action_id: "add_planned_entry",
+        value: "add_entry",
+      },
+    ],
+  });
+
+  return blocks;
+}
+
+export async function getHomeOfficeUsers(app: App, hoUsers: string[], botUserId: string): Promise<string[]> {
+  const uniqueUsers = Array.from(new Set(hoUsers.filter((userId) => userId !== botUserId)));
   const names = await Promise.all(uniqueUsers.map((userId) => resolveUserDisplayName(app, userId)));
 
   return names.sort((left, right) => left.localeCompare(right, "cs"));
 }
 
-export async function syncTrackedHoMessage(app: App, stateStore: StateStore, runtime: RuntimeContext): Promise<void> {
+export async function getVacationUsers(app: App, vacationUsers: string[], botUserId: string): Promise<string[]> {
+  const uniqueUsers = Array.from(new Set(vacationUsers.filter((userId) => userId !== botUserId)));
+  const names = await Promise.all(uniqueUsers.map((userId) => resolveUserDisplayName(app, userId)));
+
+  return names.sort((left, right) => left.localeCompare(right, "cs"));
+}
+
+export async function syncTrackedHoMessage(app: App, stateStore: StateStore, runtime: RuntimeContext, teamMemberIds: string[] = []): Promise<void> {
   const trackedMessage = stateStore.getLastHoMessage();
 
   if (!trackedMessage) {
@@ -144,41 +224,94 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
     return;
   }
 
-  const message = await fetchTrackedMessage(app, trackedMessage.channelId, trackedMessage.messageTs);
-
-  if (!message) {
-    logger.warn("Tracked HO message was not found on Slack", trackedMessage);
-    return;
+  // Clean up expired planned out of office entries
+  const hasExpired = stateStore.cleanupExpiredPlannedOutOfOffice(trackedMessage.targetDate);
+  if (hasExpired) {
+    await stateStore.saveState();
   }
 
-  const approvedUsers = await getApprovedUsers(app, message, runtime.botUserId);
-  const updatedText = buildHoMessageText(getCzechWeekdayNameFromIso(trackedMessage.targetDate), approvedUsers);
+  const hoUsers = trackedMessage.hoUsers ?? [];
+  const vacationUsers = trackedMessage.vacationUsers ?? [];
+  const plannedEntries = stateStore.getPlannedOutOfOffice();
+
+  // Get users from planned entries for today
+  const plannedHoEntries = plannedEntries.filter(
+    (entry) => entry.type === "ho" && isDateInRange(trackedMessage.targetDate, entry.startDate, entry.endDate)
+  );
+  const plannedVacationEntries = plannedEntries.filter(
+    (entry) => entry.type === "vacation" && isDateInRange(trackedMessage.targetDate, entry.startDate, entry.endDate)
+  );
+
+  // Get names for voted users (only those who voted today, not planned)
+  const homeOfficeUsers = await getHomeOfficeUsers(app, hoUsers, runtime.botUserId);
+  const vacationUserNames = await getVacationUsers(app, vacationUsers, runtime.botUserId);
+  
+  // Get names for planned users with date ranges
+  const plannedHoNames: string[] = [];
+  for (const entry of plannedHoEntries) {
+    const name = await resolveUserDisplayName(app, entry.userId);
+    const dateRange = formatDateRange(entry.startDate, entry.endDate);
+    plannedHoNames.push(`${name} (${dateRange})`);
+  }
+  plannedHoNames.sort();
+
+  const plannedVacationNames: string[] = [];
+  for (const entry of plannedVacationEntries) {
+    const name = await resolveUserDisplayName(app, entry.userId);
+    const dateRange = formatDateRange(entry.startDate, entry.endDate);
+    plannedVacationNames.push(`${name} (${dateRange})`);
+  }
+  plannedVacationNames.sort();
+  
+  const teamMemberNames = await resolveTeamMemberNames(app, teamMemberIds);
+  
+  // Build a map of user ID to team member name
+  const userIdToName = new Map<string, string>();
+  for (let i = 0; i < teamMemberIds.length; i++) {
+    userIdToName.set(teamMemberIds[i], teamMemberNames[i]);
+  }
+  
+  // Calculate in-office members (all team members minus HO, vacation, planned HO, and planned vacation)
+  const plannedHoUserIds = new Set(plannedHoEntries.map(e => e.userId));
+  const plannedVacationUserIds = new Set(plannedVacationEntries.map(e => e.userId));
+  const hoUserSet = new Set([...hoUsers, ...plannedHoUserIds]);
+  const vacationUserSet = new Set([...vacationUsers, ...plannedVacationUserIds]);
+  
+  const inOfficeNames = teamMemberNames.filter((name) => {
+    // Find the user ID for this team member name
+    const userId = Array.from(userIdToName.entries()).find(([, n]) => n === name)?.[0];
+    return userId && !hoUserSet.has(userId) && !vacationUserSet.has(userId);
+  });
+  
+  const blocks = buildHoMessageBlocks(
+    getCzechWeekdayNameFromIso(trackedMessage.targetDate),
+    homeOfficeUsers,
+    vacationUserNames,
+    inOfficeNames,
+    plannedHoNames,
+    plannedVacationNames
+  );
 
   await app.client.chat.update({
     channel: trackedMessage.channelId,
     ts: trackedMessage.messageTs,
-    text: updatedText,
+    text: `HO ${getCzechWeekdayNameFromIso(trackedMessage.targetDate)}`,
+    blocks,
   });
-
-  if (approvedUsers.length > 0) {
-    await removeBotReactionIfPresent(app, trackedMessage.channelId, trackedMessage.messageTs);
-  } else {
-    await addReactionIfPossible(app, trackedMessage.channelId, trackedMessage.messageTs, POSITIVE_REACTION);
-  }
 
   logger.info("Tracked HO message synchronized", {
     channelId: trackedMessage.channelId,
     messageTs: trackedMessage.messageTs,
-    approvedUsersCount: approvedUsers.length,
+    homeOfficeUsersCount: homeOfficeUsers.length,
+    vacationUsersCount: vacationUserNames.length,
+    plannedHoCount: plannedHoNames.length,
+    plannedVacationCount: plannedVacationNames.length,
   });
 }
 
-export function registerReactionHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext): void {
-  app.event("reaction_added", async ({ event }) => {
-
-    if (event.reaction !== POSITIVE_REACTION || event.item.type !== "message") {
-      return;
-    }
+export function registerButtonHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, teamMemberIds: string[] = []): void {
+  app.action("ho_button", async ({ ack, body }) => {
+    await ack();
 
     const trackedMessage = stateStore.getLastHoMessage();
 
@@ -186,22 +319,44 @@ export function registerReactionHandlers(app: App, stateStore: StateStore, runti
       return;
     }
 
-    if (event.item.channel !== trackedMessage.channelId || event.item.ts !== trackedMessage.messageTs) {
+    const userId = body.user.id;
+
+    // Check if user has a planned vacation or HO today
+    const plannedEntries = stateStore.getPlannedOutOfOffice();
+    const hasPlannedOOO = plannedEntries.some(
+      (entry) => entry.userId === userId && isDateInRange(trackedMessage.targetDate, entry.startDate, entry.endDate)
+    );
+
+    if (hasPlannedOOO) {
+      await app.client.chat.postEphemeral({
+        channel: trackedMessage.channelId,
+        user: userId,
+        text: "You cannot change your status for today because you have a planned time off entry. Remove it from the Planned Out of Office list first.",
+      });
       return;
     }
 
+    // Toggle home office status
+    const hoUsers = trackedMessage.hoUsers ?? [];
+    if (hoUsers.includes(userId)) {
+      stateStore.removeHoUser(userId);
+    } else {
+      stateStore.addHoUser(userId);
+      // Remove from vacation if they were on vacation
+      stateStore.removeVacationUser(userId);
+    }
+
+    await stateStore.saveState();
+
     try {
-      await syncTrackedHoMessage(app, stateStore, runtime);
+      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
     } catch (error) {
-      logger.error("Failed to sync HO message after reaction_added", error);
+      logger.error("Failed to sync HO message after button click", error);
     }
   });
 
-  app.event("reaction_removed", async ({ event }) => {
-
-    if (event.reaction !== POSITIVE_REACTION || event.item.type !== "message") {
-      return;
-    }
+  app.action("vacation_button", async ({ ack, body }) => {
+    await ack();
 
     const trackedMessage = stateStore.getLastHoMessage();
 
@@ -209,14 +364,260 @@ export function registerReactionHandlers(app: App, stateStore: StateStore, runti
       return;
     }
 
-    if (event.item.channel !== trackedMessage.channelId || event.item.ts !== trackedMessage.messageTs) {
+    const userId = body.user.id;
+
+    // Check if user has a planned vacation or HO today
+    const plannedEntries = stateStore.getPlannedOutOfOffice();
+    const hasPlannedOOO = plannedEntries.some(
+      (entry) => entry.userId === userId && isDateInRange(trackedMessage.targetDate, entry.startDate, entry.endDate)
+    );
+
+    if (hasPlannedOOO) {
+      await app.client.chat.postEphemeral({
+        channel: trackedMessage.channelId,
+        user: userId,
+        text: "You cannot change your status for today because you have a planned time off entry. Remove it from the Planned Out of Office list first.",
+      });
       return;
     }
 
+    // Toggle vacation status
+    const vacationUsers = trackedMessage.vacationUsers ?? [];
+    if (vacationUsers.includes(userId)) {
+      stateStore.removeVacationUser(userId);
+    } else {
+      stateStore.addVacationUser(userId);
+      // Remove from home office if they were on HO
+      stateStore.removeHoUser(userId);
+    }
+
+    await stateStore.saveState();
+
     try {
-      await syncTrackedHoMessage(app, stateStore, runtime);
+      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
     } catch (error) {
-      logger.error("Failed to sync HO message after reaction_removed", error);
+      logger.error("Failed to sync HO message after button click", error);
+    }
+  });
+
+  app.action("planned_ooo_button", async ({ ack, body }) => {
+    await ack();
+
+    const trackedMessage = stateStore.getLastHoMessage();
+    const hasExpired = stateStore.cleanupExpiredPlannedOutOfOffice(trackedMessage!.targetDate);
+    if (hasExpired) {
+      await stateStore.saveState();
+    }
+
+    const plannedEntries = stateStore.getPlannedOutOfOffice();
+    const blocks = buildPlannedOOOModal(body.user.id, plannedEntries);
+
+    await app.client.views.open({
+      trigger_id: (body as any).trigger_id,
+      view: {
+        type: "modal",
+        callback_id: "planned_ooo_modal",
+        title: {
+          type: "plain_text",
+          text: "Planned Out of Office",
+        },
+        blocks,
+      },
+    });
+  });
+}
+
+export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, teamMemberIds: string[] = []): void {
+  logger.info("Registering planned OOO handlers");
+
+  app.action(/^remove_planned_\d+$/, async ({ ack, body }) => {
+    logger.info("Remove planned OOO button clicked", { action_id: (body as any).actions?.[0]?.action_id });
+    await ack();
+
+    const match = (body as any).actions[0].action_id.match(/remove_planned_(\d+)/);
+    if (!match) return;
+
+    const index = parseInt(match[1], 10);
+    stateStore.removePlannedOutOfOffice(index);
+    await stateStore.saveState();
+
+    const trackedMessage = stateStore.getLastHoMessage();
+    stateStore.cleanupExpiredPlannedOutOfOffice(trackedMessage!.targetDate);
+
+    // Reopen the modal with updated list
+    const plannedEntries = stateStore.getPlannedOutOfOffice();
+    const blocks = buildPlannedOOOModal(body.user.id, plannedEntries);
+
+    await app.client.views.update({
+      view_id: (body as any).view.id,
+      view: {
+        type: "modal",
+        callback_id: "planned_ooo_modal",
+        title: {
+          type: "plain_text",
+          text: "Planned Out of Office",
+        },
+        blocks,
+      },
+    });
+
+    // Sync the HO message to reflect changes
+    try {
+      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
+    } catch (error) {
+      logger.error("Failed to sync HO message after removing planned OOO", error);
+    }
+  });
+
+  app.action("add_planned_entry", async ({ ack, body }) => {
+    logger.info("Add planned entry button clicked");
+    await ack();
+
+    try {
+      logger.info("Opening add planned OOO modal");
+      
+      await app.client.views.push({
+        trigger_id: (body as any).trigger_id,
+        view: {
+          type: "modal",
+          callback_id: "add_planned_ooo_form",
+          title: {
+            type: "plain_text",
+            text: "Schedule Time Off",
+          },
+          submit: {
+            type: "plain_text",
+            text: "Add",
+          },
+          blocks: [
+            {
+              type: "input",
+              block_id: "planned_type",
+              label: {
+                type: "plain_text",
+                text: "Type",
+              },
+              element: {
+                type: "static_select",
+                action_id: "type_select",
+                options: [
+                  {
+                    text: {
+                      type: "plain_text",
+                      text: "🏠 Home Office",
+                    },
+                    value: "ho",
+                  },
+                  {
+                    text: {
+                      type: "plain_text",
+                      text: "🏝️ Vacation",
+                    },
+                    value: "vacation",
+                  },
+                ],
+              },
+            },
+            {
+              type: "input",
+              block_id: "planned_start_date",
+              label: {
+                type: "plain_text",
+                text: "Start Date",
+              },
+              element: {
+                type: "datepicker",
+                action_id: "start_date_picker",
+              },
+            },
+            {
+              type: "input",
+              block_id: "planned_end_date",
+              label: {
+                type: "plain_text",
+                text: "End Date (optional)",
+              },
+              element: {
+                type: "datepicker",
+                action_id: "end_date_picker",
+              },
+              optional: true,
+            },
+          ],
+        },
+      });
+      logger.info("Modal opened successfully");
+    } catch (error) {
+      logger.error("Failed to open add planned OOO modal", error);
+    }
+  });
+
+  app.view("add_planned_ooo_form", async ({ ack, body, view }) => {
+    await ack();
+
+    const values = view.state.values;
+    logger.info("Form submitted", { values });
+
+    const userId = body.user.id;
+    const type = values.planned_type.type_select.selected_option?.value as "ho" | "vacation";
+    const startDate = values.planned_start_date.start_date_picker.selected_date;
+    const endDate = values.planned_end_date?.end_date_picker?.selected_date;
+
+    logger.info("Extracted values", { userId, type, startDate, endDate });
+
+    if (!userId || !type || !startDate) {
+      logger.warn("Form validation failed", { userId, type, startDate });
+      return;
+    }
+
+    const entry: PlannedOutOfOffice = {
+      userId,
+      type,
+      startDate,
+      endDate: endDate ?? undefined,
+    };
+
+    logger.info("Creating planned entry", { entry });
+    stateStore.addPlannedOutOfOffice(entry);
+
+    // If the planned entry starts today, remove the user from today's votes
+    const trackedMessage = stateStore.getLastHoMessage();
+    if (trackedMessage && isDateInRange(trackedMessage.targetDate, entry.startDate, entry.endDate)) {
+      stateStore.removeHoUser(userId);
+      stateStore.removeVacationUser(userId);
+    }
+
+    await stateStore.saveState();
+
+    // Sync the HO message to reflect changes
+    try {
+      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
+    } catch (error) {
+      logger.error("Failed to sync HO message after adding planned OOO", error);
+    }
+
+    // Update the parent modal with the new list
+    const previousViewId = (body as any).view.previous_view_id;
+    if (previousViewId) {
+      try {
+        const plannedEntries = stateStore.getPlannedOutOfOffice();
+        const blocks = buildPlannedOOOModal(body.user.id, plannedEntries);
+
+        await app.client.views.update({
+          view_id: previousViewId,
+          view: {
+            type: "modal",
+            callback_id: "planned_ooo_modal",
+            title: {
+              type: "plain_text",
+              text: "Planned Out of Office",
+            },
+            blocks,
+          },
+        });
+      } catch (error) {
+        logger.error("Failed to update parent modal after adding planned OOO", error);
+      }
     }
   });
 }

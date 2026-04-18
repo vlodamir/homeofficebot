@@ -1,7 +1,7 @@
 import { loadConfig } from "./config";
 import { getTomorrowInTimeZone } from "./date";
 import { logger } from "./logger";
-import { addDefaultReactions, createSlackApp, postHoMessage } from "./slack";
+import { createSlackApp, postHoMessage } from "./slack";
 import { StateStore } from "./state";
 
 async function sendNow(): Promise<void> {
@@ -17,8 +17,7 @@ async function sendNow(): Promise<void> {
 
   logger.info("Sending HO message now (manual trigger)", { targetDate });
 
-  const trackedMessage = await postHoMessage(app, config.slackChannelId, targetDate);
-  await addDefaultReactions(app, trackedMessage.channelId, trackedMessage.messageTs);
+  const trackedMessage = await postHoMessage(app, config.slackChannelId, targetDate, config.teamMembers, stateStore);
   await stateStore.setLastHoMessage(trackedMessage);
 
   logger.info("Done", { messageTs: trackedMessage.messageTs });

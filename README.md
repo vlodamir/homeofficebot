@@ -23,10 +23,10 @@ Slack bot v TypeScriptu pro denní HO hlasování. Každý pracovní den v 18:00
 
 ```bash
 npm install
-copy .env.example .env
+cp config.example.yaml config.yaml
 ```
 
-Otevři `.env` a vyplň hodnoty (viz sekce níže).
+Otevři `config.yaml` a vyplň hodnoty (viz sekce níže).
 
 ## Spuštění
 
@@ -40,17 +40,31 @@ Ruční odeslání zprávy okamžitě (pro testování):
 npm run send-now
 ```
 
-## Environment proměnné
+## Konfigurace (config.yaml)
 
-| Proměnná | Popis |
-|---|---|
-| `SLACK_BOT_TOKEN` | Bot User OAuth Token (`xoxb-...`) |
-| `SLACK_APP_TOKEN` | App-Level Token (`xapp-...`) |
-| `SLACK_CHANNEL_ID` | ID cílového kanálu (`C0XXXXXXX`) |
-| `TIMEZONE` | Časová zóna (výchozí: `Europe/Prague`) |
-| `POST_HOUR` | Hodina odeslání (výchozí: `18`) |
-| `POST_MINUTE` | Minuta odeslání (výchozí: `0`) |
-| `STATE_FILE_PATH` | Cesta k souboru stavu (výchozí: `data/state.json`) |
+Aplikace se konfiguruje přes YAML soubor, který se předá jako command-line argument `--config`.
+
+Příklad `config.yaml`:
+
+```yaml
+slackBotToken: "xoxb-..."
+slackAppToken: "xapp-..."
+slackChannelId: "C0XXXXXXX"
+postHour: 18
+postMinute: 0
+timezone: "Europe/Prague"
+stateFilePath: "data/state.json"
+```
+
+| Položka | Popis | Výchozí |
+|---|---|---|
+| `slackBotToken` | Bot User OAuth Token (`xoxb-...`) | — (povinné) |
+| `slackAppToken` | App-Level Token (`xapp-...`) | — (povinné) |
+| `slackChannelId` | ID cílového kanálu (`C0XXXXXXX`) | — (povinné) |
+| `timezone` | Časová zóna (IANA format) | `Europe/Prague` |
+| `postHour` | Hodina odeslání (0–23) | `18` |
+| `postMinute` | Minuta odeslání (0–59) | `0` |
+| `stateFilePath` | Cesta k souboru stavu | `data/state.json` |
 
 ## Nastavení Slack app
 
