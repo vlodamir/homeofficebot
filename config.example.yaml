@@ -1,0 +1,28 @@
+# Home Office Bot Configuration
+# 
+# Copy this file to config.yaml and fill in the required values.
+# Run the bot with: npm start -- --config config.yaml
+
+# Slack bot token (starts with xoxb-)
+slackBotToken: "xoxb-YOUR-BOT-TOKEN-HERE"
+
+# Slack app token (starts with xapp-)
+slackAppToken: "xapp-YOUR-APP-TOKEN-HERE"
+
+# Slack channel ID where the daily message will be posted
+slackChannelId: "C0123456789"
+
+# Time of day to post the message (24-hour format)
+# Hour (0-23), defaults to 18
+postHour: 18
+
+# Minute (0-59), defaults to 0
+postMinute: 0
+
+# Timezone for scheduling (IANA timezone identifier)
+# defaults to "Europe/Prague"
+timezone: "Europe/Prague"
+
+# Path to state file for tracking posted messages
+# defaults to "data/state.json"
+stateFilePath: "data/state.json"

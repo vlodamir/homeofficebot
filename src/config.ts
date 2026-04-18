@@ -1,53 +1,98 @@
 import path from "node:path";
-import dotenv from "dotenv";
+import fs from "node:fs";
+import { parse as parseYaml } from "yaml";
 import { AppConfig } from "./types";
 
-dotenv.config();
-
-function requireEnv(name: string): string {
-  const value = process.env[name]?.trim();
-
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
+function getConfigFilePath(): string {
+  const configFlag = process.argv.find((arg) => arg.startsWith("--config="));
+  if (configFlag) {
+    return configFlag.replace("--config=", "");
   }
 
-  return value;
+  // Check for --config with separate value
+  const configIndex = process.argv.indexOf("--config");
+  if (configIndex !== -1 && configIndex + 1 < process.argv.length) {
+    return process.argv[configIndex + 1];
+  }
+
+  throw new Error(
+    "Configuration file path not provided. Please use: --config /path/to/config.yaml"
+  );
 }
 
-function parseIntegerEnv(name: string, fallback: number): number {
-  const rawValue = process.env[name]?.trim();
+function requireField(config: Record<string, unknown>, field: string): string {
+  const value = config[field];
 
-  if (!rawValue) {
+  if (!value || typeof value !== "string" || !value.trim()) {
+    throw new Error(`Missing required configuration field: ${field}`);
+  }
+
+  return value.trim();
+}
+
+function parseIntegerField(config: Record<string, unknown>, field: string, fallback: number): number {
+  const value = config[field];
+
+  if (value === undefined || value === null) {
     return fallback;
   }
 
-  const parsedValue = Number.parseInt(rawValue, 10);
+  const parsedValue = typeof value === "number" ? value : Number.parseInt(String(value), 10);
 
   if (!Number.isInteger(parsedValue)) {
-    throw new Error(`Environment variable ${name} must be an integer`);
+    throw new Error(`Configuration field ${field} must be an integer`);
   }
 
   return parsedValue;
 }
 
-function validateRange(name: string, value: number, min: number, max: number): number {
+function validateRange(field: string, value: number, min: number, max: number): number {
   if (value < min || value > max) {
-    throw new Error(`Environment variable ${name} must be between ${min} and ${max}`);
+    throw new Error(`Configuration field ${field} must be between ${min} and ${max}`);
   }
 
   return value;
 }
 
 export function loadConfig(): AppConfig {
-  const postHour = validateRange("POST_HOUR", parseIntegerEnv("POST_HOUR", 18), 0, 23);
-  const postMinute = validateRange("POST_MINUTE", parseIntegerEnv("POST_MINUTE", 0), 0, 59);
-  const timezone = process.env.TIMEZONE?.trim() || "Europe/Prague";
-  const stateFilePath = path.resolve(process.cwd(), process.env.STATE_FILE_PATH?.trim() || "data/state.json");
+  const configPath = getConfigFilePath();
+  const absoluteConfigPath = path.isAbsolute(configPath)
+    ? configPath
+    : path.resolve(process.cwd(), configPath);
+
+  if (!fs.existsSync(absoluteConfigPath)) {
+    throw new Error(`Configuration file not found: ${absoluteConfigPath}`);
+  }
+
+  const fileContent = fs.readFileSync(absoluteConfigPath, "utf-8");
+  const config = parseYaml(fileContent) as Record<string, unknown>;
+
+  if (!config || typeof config !== "object") {
+    throw new Error("Invalid YAML configuration file");
+  }
+
+  const postHour = validateRange(
+    "postHour",
+    parseIntegerField(config, "postHour", 18),
+    0,
+    23
+  );
+  const postMinute = validateRange(
+    "postMinute",
+    parseIntegerField(config, "postMinute", 0),
+    0,
+    59
+  );
+  const timezone = (config.timezone as string) || "Europe/Prague";
+  const stateFilePath = path.resolve(
+    process.cwd(),
+    (config.stateFilePath as string) || "data/state.json"
+  );
 
   return {
-    slackBotToken: requireEnv("SLACK_BOT_TOKEN"),
-    slackAppToken: requireEnv("SLACK_APP_TOKEN"),
-    slackChannelId: requireEnv("SLACK_CHANNEL_ID"),
+    slackBotToken: requireField(config, "slackBotToken"),
+    slackAppToken: requireField(config, "slackAppToken"),
+    slackChannelId: requireField(config, "slackChannelId"),
     timezone,
     postHour,
     postMinute,
