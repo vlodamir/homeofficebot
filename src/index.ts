@@ -14,11 +14,11 @@ async function runStartupCatchUp(app: App, config: AppConfig, stateStore: StateS
   const scheduledMinutes = config.postHour * 60 + config.postMinute;
 
   if (localMinutes < scheduledMinutes) {
-    logger.info("Startup catch-up skipped – scheduled time has not passed yet today");
+    logger.info("Startup catch-up skipped - scheduled time has not passed yet today");
     return;
   }
 
-  logger.info("Startup catch-up check – scheduled time already passed, checking if message was sent");
+  logger.info("Startup catch-up check - scheduled time already passed, checking if message was sent");
   await publishScheduledHoMessage(app, config, stateStore, runtime);
 }
 
