@@ -146,6 +146,33 @@ function formatDateRange(startDate: string, endDate?: string): string {
   return `${startMonth} ${startDay} - ${endMonth} ${endDay}`;
 }
 
+function doDateRangesOverlap(
+  start1: string,
+  end1: string | undefined,
+  start2: string,
+  end2: string | undefined
+): boolean {
+  // If either range has no end date, we consider it as extending to a far future date
+  const effectiveEnd1 = end1 || "2099-12-31";
+  const effectiveEnd2 = end2 || "2099-12-31";
+
+  // Two ranges overlap if: start1 <= end2 AND start2 <= end1
+  return start1 <= effectiveEnd2 && start2 <= effectiveEnd1;
+}
+
+function findOverlappingPlannedOOO(
+  userId: string,
+  startDate: string,
+  endDate: string | undefined,
+  plannedEntries: PlannedOutOfOffice[]
+): PlannedOutOfOffice | undefined {
+  return plannedEntries.find(
+    (entry) =>
+      entry.userId === userId &&
+      doDateRangesOverlap(startDate, endDate, entry.startDate, entry.endDate)
+  );
+}
+
 function buildPlannedOOOModal(userId: string, plannedEntries: PlannedOutOfOffice[]): any[] {
   const blocks: any[] = [];
 
@@ -558,8 +585,6 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
   });
 
   app.view("add_planned_ooo_form", async ({ ack, body, view }) => {
-    await ack();
-
     const values = view.state.values;
     logger.info("Form submitted", { values });
 
@@ -572,14 +597,39 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
 
     if (!userId || !type || !startDate) {
       logger.warn("Form validation failed", { userId, type, startDate });
+      await ack({
+        response_action: "errors",
+        errors: {
+          planned_start_date: "Start date is required",
+        },
+      });
       return;
     }
+
+    // Check for overlapping planned out of office entries
+    const plannedEntries = stateStore.getPlannedOutOfOffice();
+    const overlappingEntry = findOverlappingPlannedOOO(userId, startDate as string, endDate ?? undefined, plannedEntries);
+
+    if (overlappingEntry) {
+      const existingRange = formatDateRange(overlappingEntry.startDate, overlappingEntry.endDate);
+      logger.info("Overlapping planned OOO found", { overlappingEntry, newRange: `${startDate} to ${endDate}` });
+      
+      await ack({
+        response_action: "errors",
+        errors: {
+          planned_start_date: `You already have a planned time off from ${existingRange}. Remove or modify that entry first.`,
+        },
+      });
+      return;
+    }
+
+    await ack();
 
     const entry: PlannedOutOfOffice = {
       id: randomUUID(),
       userId,
       type,
-      startDate,
+      startDate: startDate as string,
       endDate: endDate ?? undefined,
     };
 
