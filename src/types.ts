@@ -10,6 +10,7 @@ export interface AppConfig {
 }
 
 export interface PlannedOutOfOffice {
+  id: string; // Unique identifier
   userId: string;
   type: "ho" | "vacation";
   startDate: string; // ISO date YYYY-MM-DD

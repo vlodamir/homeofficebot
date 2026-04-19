@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { logger } from "./logger";
@@ -18,9 +19,18 @@ export class StateStore {
       const raw = await fs.readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw) as StoredState;
 
+      // Ensure all planned out of office entries have IDs (migration for existing entries)
+      const plannedEntries = (parsed.plannedOutOfOffice ?? []).map((entry: any) => ({
+        id: entry.id || randomUUID(),
+        userId: entry.userId,
+        type: entry.type,
+        startDate: entry.startDate,
+        endDate: entry.endDate,
+      }));
+
       this.state = {
         lastHoMessage: parsed.lastHoMessage ?? null,
-        plannedOutOfOffice: parsed.plannedOutOfOffice ?? [],
+        plannedOutOfOffice: plannedEntries,
       };
 
       logger.info("State loaded", this.state);
@@ -104,9 +114,9 @@ export class StateStore {
     this.state.plannedOutOfOffice.push(entry);
   }
 
-  removePlannedOutOfOffice(index: number): void {
-    if (this.state.plannedOutOfOffice && index >= 0 && index < this.state.plannedOutOfOffice.length) {
-      this.state.plannedOutOfOffice.splice(index, 1);
+  removePlannedOutOfOffice(id: string): void {
+    if (this.state.plannedOutOfOffice) {
+      this.state.plannedOutOfOffice = this.state.plannedOutOfOffice.filter(entry => entry.id !== id);
     }
   }
 

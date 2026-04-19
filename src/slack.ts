@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { App } from "@slack/bolt";
 import { buildHoMessageBlocks } from "./hoMessage";
 import { logger } from "./logger";
@@ -157,7 +158,7 @@ function buildPlannedOOOModal(userId: string, plannedEntries: PlannedOutOfOffice
       },
     });
   } else {
-    plannedEntries.forEach((entry, index) => {
+    plannedEntries.forEach((entry) => {
       if (entry.userId !== userId) {
         return; // Only show entries for the current user
       }
@@ -176,8 +177,8 @@ function buildPlannedOOOModal(userId: string, plannedEntries: PlannedOutOfOffice
             type: "plain_text",
             text: "Remove",
           },
-          value: String(index),
-          action_id: `remove_planned_${index}`,
+          value: entry.id,
+          action_id: `remove_planned_${entry.id}`,
           style: "danger",
         },
       });
@@ -430,15 +431,19 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
 export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, teamMemberIds: string[] = []): void {
   logger.info("Registering planned OOO handlers");
 
-  app.action(/^remove_planned_\d+$/, async ({ ack, body }) => {
+  app.action(/^remove_planned_/, async ({ ack, body }) => {
     logger.info("Remove planned OOO button clicked", { action_id: (body as any).actions?.[0]?.action_id });
     await ack();
 
-    const match = (body as any).actions[0].action_id.match(/remove_planned_(\d+)/);
-    if (!match) return;
+    const actionId = (body as any).actions[0].action_id;
+    const id = actionId.replace(/^remove_planned_/, "");
+    
+    if (!id) {
+      logger.warn("Could not extract ID from action_id", { actionId });
+      return;
+    }
 
-    const index = parseInt(match[1], 10);
-    stateStore.removePlannedOutOfOffice(index);
+    stateStore.removePlannedOutOfOffice(id);
     await stateStore.saveState();
 
     const trackedMessage = stateStore.getLastHoMessage();
@@ -571,6 +576,7 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
     }
 
     const entry: PlannedOutOfOffice = {
+      id: randomUUID(),
       userId,
       type,
       startDate,
