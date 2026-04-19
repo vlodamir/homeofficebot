@@ -6,9 +6,9 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json && esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js",
-    "dev": "tsx src/index.ts",
-    "send-now": "tsx src/sendNow.ts",
-    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts -- --config config.yaml",
+    "send-now": "tsx src/sendNow.ts -- --config config.yaml",
+    "start": "node dist/index.js -- --config config.yaml",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "engines": {
@@ -16,8 +16,8 @@
   },
   "dependencies": {
     "@slack/bolt": "^4.5.0",
-    "dotenv": "^16.6.1",
-    "node-cron": "^4.2.1"
+    "node-cron": "^4.2.1",
+    "yaml": "^2.4.1"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
