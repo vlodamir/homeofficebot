@@ -26,7 +26,17 @@ export async function resolveBotUserId(app: App): Promise<string> {
 
 export async function postHoMessage(app: App, channelId: string, targetDate: string, teamMemberIds: string[] = [], stateStore?: StateStore): Promise<HOMessageState> {
   const dayName = getCzechWeekdayNameFromIso(targetDate);
-  const teamMemberNames = await resolveTeamMemberNames(app, teamMemberIds);
+  
+  // Resolve names for team members and create proper ID-to-name mapping
+  const names = await Promise.all(teamMemberIds.map((userId) => resolveUserDisplayName(app, userId)));
+  const userIdToName = new Map<string, string>();
+  for (let i = 0; i < teamMemberIds.length; i++) {
+    userIdToName.set(teamMemberIds[i], names[i]);
+  }
+  
+  // Create pairs of userId and name, sort by name
+  const userNamePairs = Array.from(userIdToName.entries()).sort((a, b) => a[1].localeCompare(b[1], "cs"));
+  const teamMemberNames = userNamePairs.map(([, name]) => name);
   
   let plannedHoNames: string[] = [];
   let plannedVacationNames: string[] = [];
@@ -63,7 +73,7 @@ export async function postHoMessage(app: App, channelId: string, targetDate: str
     
     // Filter in-office names to exclude planned OOO users
     inOfficeNames = teamMemberNames.filter((name) => {
-      const userId = teamMemberIds[teamMemberNames.indexOf(name)];
+      const userId = userNamePairs.find(([, n]) => n === name)?.[0];
       return userId && !plannedHoUserIds.has(userId) && !plannedVacationUserIds.has(userId);
     });
   }
@@ -291,13 +301,16 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
   }
   plannedVacationNames.sort();
   
-  const teamMemberNames = await resolveTeamMemberNames(app, teamMemberIds);
-  
-  // Build a map of user ID to team member name
+  // Resolve names for team members and create proper ID-to-name mapping
+  const names = await Promise.all(teamMemberIds.map((userId) => resolveUserDisplayName(app, userId)));
   const userIdToName = new Map<string, string>();
   for (let i = 0; i < teamMemberIds.length; i++) {
-    userIdToName.set(teamMemberIds[i], teamMemberNames[i]);
+    userIdToName.set(teamMemberIds[i], names[i]);
   }
+  
+  // Create pairs of userId and name, sort by name
+  const userNamePairs = Array.from(userIdToName.entries()).sort((a, b) => a[1].localeCompare(b[1], "cs"));
+  const teamMemberNames = userNamePairs.map(([, name]) => name);
   
   // Calculate in-office members (all team members minus HO, vacation, planned HO, and planned vacation)
   const plannedHoUserIds = new Set(plannedHoEntries.map(e => e.userId));
@@ -307,7 +320,7 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
   
   const inOfficeNames = teamMemberNames.filter((name) => {
     // Find the user ID for this team member name
-    const userId = Array.from(userIdToName.entries()).find(([, n]) => n === name)?.[0];
+    const userId = userNamePairs.find(([, n]) => n === name)?.[0];
     return userId && !hoUserSet.has(userId) && !vacationUserSet.has(userId);
   });
   
