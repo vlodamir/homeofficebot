@@ -16,16 +16,6 @@ export function buildHoMessageBlocks(
     },
   ];
 
-  if (inOfficeNames.length > 0) {
-    blocks.push({
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*Onsite (${inOfficeNames.length}):*\n${inOfficeNames.map((name) => `• ${name}`).join("\n")}`,
-      },
-    });
-  }
-
   if (homeOfficeNames.length > 0 || plannedHoNames.length > 0) {
     blocks.push({
       type: "section",
@@ -43,6 +33,25 @@ export function buildHoMessageBlocks(
         type: "mrkdwn",
         text: `*Vacation (${vacationNames.length + plannedVacationNames.length}):*\n${vacationNames.map((name) => `• ${name}`).join("\n")}\n${plannedVacationNames.map((name) => `• ${name}`).join("\n")}`,
       },
+    });
+  }
+
+  if (inOfficeNames.length > 0) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*Onsite (${inOfficeNames.length})*`,
+      },
+      accessory: {
+        type: "button",
+        text: {
+          type: "plain_text",
+          text: "Show all",
+        },
+        value: JSON.stringify(inOfficeNames),
+        action_id: "show_all_in_office",
+      }
     });
   }
 

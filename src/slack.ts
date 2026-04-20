@@ -466,6 +466,32 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
       },
     });
   });
+
+  app.action("show_all_in_office", async ({ ack, body }) => {
+    await ack();
+    
+    const inOfficeNames = JSON.parse((body as any).actions[0].value) as string[];
+    await app.client.views.open({
+      trigger_id: (body as any).trigger_id,
+      view: {
+        type: "modal",
+        callback_id: "planned_ooo_modal",
+        title: {
+          type: "plain_text",
+          text: "Onsite",
+        },
+        blocks: [
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `${inOfficeNames.map((name) => `• ${name}`).join("\n")}`,
+            }
+          },
+        ],
+      },
+    });
+  });
 }
 
 export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, teamMemberIds: string[] = []): void {
