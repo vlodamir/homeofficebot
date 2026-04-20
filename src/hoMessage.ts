@@ -19,9 +19,8 @@ export function buildHoMessageBlocks(
   ];
 
   if (homeOfficeNames.length > 0 || plannedHoNames.length > 0) {
-    let messageText = `🏠 *Home Office (${homeOfficeNames.length + plannedHoNames.length}):*\n`;
+    let messageText = `🏠 *Home Office:*\n`;
     if (homeOfficeNames.length > 0 || plannedHoNames.length > 0) {
-      messageText += "```\n";
 
       homeOfficeNames.forEach((name) => {
         messageText += `• ${name}\n`;
@@ -29,8 +28,6 @@ export function buildHoMessageBlocks(
       plannedHoNames.forEach((name) => {
         messageText += `• ${name}\n`;
       });
-
-      messageText += "```";
     }
 
     blocks.push({
@@ -43,18 +40,14 @@ export function buildHoMessageBlocks(
   }
 
   if (vacationNames.length > 0 || plannedVacationNames.length > 0) {
-    let messageText = `🏝️ *Vacation (${vacationNames.length + plannedVacationNames.length}):*\n`;
+    let messageText = `🏝️ *Vacation:*\n`;
     if (vacationNames.length > 0 || plannedVacationNames.length > 0) {
-      messageText += "```\n";
-
       vacationNames.forEach((name) => {
         messageText += `• ${name}\n`;
       });
       plannedVacationNames.forEach((name) => {
         messageText += `• ${name}\n`;
       });
-
-      messageText += "```";
     }
 
     blocks.push({
@@ -83,7 +76,7 @@ export function buildHoMessageBlocks(
         type: "button",
         text: {
           type: "plain_text",
-          text: "🏠 Home Office",
+          text: "🏠 HO",
         },
         value: "ho",
         action_id: "ho_button",
@@ -101,7 +94,7 @@ export function buildHoMessageBlocks(
         type: "button",
         text: {
           type: "plain_text",
-          text: "📅 Planned Out of Office",
+          text: "📅 Planned Absences",
         },
         value: "planned",
         action_id: "planned_ooo_button",
@@ -110,7 +103,7 @@ export function buildHoMessageBlocks(
         type: "button",
         text: {
           type: "plain_text",
-          text: ":office: Show all Onsite",
+          text: ":office: Show all",
         },
         value: JSON.stringify(inOfficeNames),
         action_id: "show_all_in_office",
