@@ -356,7 +356,7 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
 
     const trackedMessage = stateStore.getLastHoMessage();
 
-    if (!trackedMessage) {
+    if (!trackedMessage || trackedMessage.messageTs !== (body as any).message.ts) {
       return;
     }
 
@@ -401,7 +401,7 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
 
     const trackedMessage = stateStore.getLastHoMessage();
 
-    if (!trackedMessage) {
+    if (!trackedMessage || trackedMessage.messageTs !== (body as any).message.ts) {
       return;
     }
 
