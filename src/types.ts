@@ -22,6 +22,7 @@ export interface HOMessageState {
   messageTs: string;
   targetDate: string;
   postedAt: string;
+  confirmedOnsiteUsers?: string[];
   hoUsers?: string[];
   vacationUsers?: string[];
 }

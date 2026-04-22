@@ -268,6 +268,7 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
     await stateStore.saveState();
   }
 
+  const confirmedOnsiteUsers = trackedMessage.confirmedOnsiteUsers ?? [];
   const hoUsers = trackedMessage.hoUsers ?? [];
   const vacationUsers = trackedMessage.vacationUsers ?? [];
   const plannedEntries = stateStore.getPlannedOutOfOffice();
@@ -322,6 +323,14 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
     // Find the user ID for this team member name
     const userId = userNamePairs.find(([, n]) => n === name)?.[0];
     return userId && !hoUserSet.has(userId) && !vacationUserSet.has(userId);
+  }).map((name) => {
+    // Add a checkmark for users who have confirmed onsite
+    const userId = userNamePairs.find(([, n]) => n === name)?.[0];
+    if (userId && confirmedOnsiteUsers.includes(userId)) {
+      return `${name} :white_check_mark:`;
+    }
+
+    return name;
   });
   
   const blocks = buildHoMessageBlocks(
@@ -330,7 +339,8 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
     vacationUserNames,
     inOfficeNames,
     plannedHoNames,
-    plannedVacationNames
+    plannedVacationNames,
+    confirmedOnsiteUsers
   );
 
   await app.client.chat.update({
@@ -351,11 +361,10 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
 }
 
 export function registerButtonHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, teamMemberIds: string[] = []): void {
-  app.action("ho_button", async ({ ack, body }) => {
+  app.action(/^user_state_button_(onsite|ho|vacation)$/, async ({ ack, body }) => {
     await ack();
 
     const trackedMessage = stateStore.getLastHoMessage();
-
     if (!trackedMessage || trackedMessage.messageTs !== (body as any).message.ts) {
       return;
     }
@@ -376,60 +385,32 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
       });
       return;
     }
-
-    // Toggle home office status
-    const hoUsers = trackedMessage.hoUsers ?? [];
-    if (hoUsers.includes(userId)) {
-      stateStore.removeHoUser(userId);
-    } else {
-      stateStore.addHoUser(userId);
-      // Remove from vacation if they were on vacation
-      stateStore.removeVacationUser(userId);
-    }
-
-    await stateStore.saveState();
-
-    try {
-      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
-    } catch (error) {
-      logger.error("Failed to sync HO message after button click", error);
-    }
-  });
-
-  app.action("vacation_button", async ({ ack, body }) => {
-    await ack();
-
-    const trackedMessage = stateStore.getLastHoMessage();
-
-    if (!trackedMessage || trackedMessage.messageTs !== (body as any).message.ts) {
-      return;
-    }
-
-    const userId = body.user.id;
-
-    // Check if user has a planned vacation or HO today
-    const plannedEntries = stateStore.getPlannedOutOfOffice();
-    const hasPlannedOOO = plannedEntries.some(
-      (entry) => entry.userId === userId && isDateInRange(trackedMessage.targetDate, entry.startDate, entry.endDate)
-    );
-
-    if (hasPlannedOOO) {
-      await app.client.chat.postEphemeral({
-        channel: trackedMessage.channelId,
-        user: userId,
-        text: "You cannot change your status for today because you have a planned time off entry. Remove it from the Planned Out of Office list first.",
-      });
-      return;
-    }
-
-    // Toggle vacation status
-    const vacationUsers = trackedMessage.vacationUsers ?? [];
-    if (vacationUsers.includes(userId)) {
-      stateStore.removeVacationUser(userId);
-    } else {
-      stateStore.addVacationUser(userId);
-      // Remove from home office if they were on HO
-      stateStore.removeHoUser(userId);
+    
+    const action = (body as any).actions[0].value;
+    if (action === "onsite") {
+      if (trackedMessage.confirmedOnsiteUsers?.includes(userId)) {
+        stateStore.removeConfirmedOnsiteUser(userId);
+      } else {
+        stateStore.addConfirmedOnsiteUser(userId);
+        stateStore.removeHoUser(userId);
+        stateStore.removeVacationUser(userId);
+      }
+    } else if (action === "ho") {
+      if (trackedMessage.hoUsers?.includes(userId)) {
+        stateStore.removeHoUser(userId);
+      } else {
+        stateStore.addHoUser(userId);
+        stateStore.removeConfirmedOnsiteUser(userId);
+        stateStore.removeVacationUser(userId);
+      }
+    } else if (action === "vacation") {
+      if (trackedMessage.vacationUsers?.includes(userId)) {
+        stateStore.removeVacationUser(userId);
+      } else {
+        stateStore.addVacationUser(userId);
+        stateStore.removeConfirmedOnsiteUser(userId);
+        stateStore.removeHoUser(userId);
+      }
     }
 
     await stateStore.saveState();
@@ -678,6 +659,7 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
     // If the planned entry starts today, remove the user from today's votes
     const trackedMessage = stateStore.getLastHoMessage();
     if (trackedMessage && isDateInRange(trackedMessage.targetDate, entry.startDate, entry.endDate)) {
+      stateStore.removeConfirmedOnsiteUser(userId);
       stateStore.removeHoUser(userId);
       stateStore.removeVacationUser(userId);
     }

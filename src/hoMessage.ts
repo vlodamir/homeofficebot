@@ -4,7 +4,8 @@ export function buildHoMessageBlocks(
   vacationNames: string[] = [],
   inOfficeNames: string[] = [],
   plannedHoNames: string[] = [],
-  plannedVacationNames: string[] = []
+  plannedVacationNames: string[] = [],
+  confirmedOnsiteUsers: string[] = [],
 ): any[] {
   const blocks: any[] = [
     {
@@ -64,7 +65,7 @@ export function buildHoMessageBlocks(
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*Onsite (${inOfficeNames.length})*`,
+        text: `*Onsite ${inOfficeNames.length} (${confirmedOnsiteUsers.length} confirmed)*`,
       }
     });
   }
@@ -76,10 +77,19 @@ export function buildHoMessageBlocks(
         type: "button",
         text: {
           type: "plain_text",
+          text: ":white_check_mark: Confirm Onsite",
+        },
+        value: "onsite",
+        action_id: "user_state_button_onsite",
+      },
+      {
+        type: "button",
+        text: {
+          type: "plain_text",
           text: "🏠 HO",
         },
         value: "ho",
-        action_id: "ho_button",
+        action_id: "user_state_button_ho",
       },
       {
         type: "button",
@@ -88,7 +98,7 @@ export function buildHoMessageBlocks(
           text: "🏝️ Vacation",
         },
         value: "vacation",
-        action_id: "vacation_button",
+        action_id: "user_state_button_vacation",
       },
       {
         type: "button",

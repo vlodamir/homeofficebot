@@ -61,6 +61,27 @@ export class StateStore {
     await this.save();
   }
 
+  addConfirmedOnsiteUser(userId: string): void {
+    if (this.state.lastHoMessage) {
+      const confirmedOnsiteUsers = this.state.lastHoMessage.confirmedOnsiteUsers ?? [];
+      if (!confirmedOnsiteUsers.includes(userId)) {
+        confirmedOnsiteUsers.push(userId);
+        this.state.lastHoMessage.confirmedOnsiteUsers = confirmedOnsiteUsers;
+      }
+    }
+  }
+
+  removeConfirmedOnsiteUser(userId: string): void {
+    if (this.state.lastHoMessage) {
+      const confirmedOnsiteUsers = this.state.lastHoMessage.confirmedOnsiteUsers ?? [];
+      const index = confirmedOnsiteUsers.indexOf(userId);
+      if (index > -1) {
+        confirmedOnsiteUsers.splice(index, 1);
+        this.state.lastHoMessage.confirmedOnsiteUsers = confirmedOnsiteUsers;
+      }
+    }
+  }
+
   addHoUser(userId: string): void {
     if (this.state.lastHoMessage) {
       const hoUsers = this.state.lastHoMessage.hoUsers ?? [];
