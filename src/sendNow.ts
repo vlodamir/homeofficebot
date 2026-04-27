@@ -1,5 +1,5 @@
 import { loadConfig } from "./config";
-import { getTomorrowInTimeZone } from "./date";
+import { getNextWorkdayInTimeZone } from "./date";
 import { logger } from "./logger";
 import { createSlackApp, postHoMessage } from "./slack";
 import { StateStore } from "./state";
@@ -13,7 +13,7 @@ async function sendNow(): Promise<void> {
   const app = createSlackApp(config);
   await app.start();
 
-  const targetDate = getTomorrowInTimeZone(new Date(), config.timezone).isoDate;
+  const targetDate = getNextWorkdayInTimeZone(new Date(), config.timezone).isoDate;
 
   logger.info("Sending HO message now (manual trigger)", { targetDate });
 
