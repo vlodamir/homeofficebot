@@ -1,6 +1,6 @@
 import cron, { ScheduledTask } from "node-cron";
 import { getCronExpression } from "./config";
-import { getTomorrowInTimeZone, isWeekendLocalDateParts } from "./date";
+import { getLocalDateInTimeZone, getNextWorkdayInTimeZone, isWeekendLocalDateParts } from "./date";
 import { logger } from "./logger";
 import { StateStore } from "./state";
 import { AppConfig, RuntimeContext } from "./types";
@@ -14,16 +14,16 @@ export async function publishScheduledHoMessage(
   runtime: RuntimeContext,
 ): Promise<void> {
   const now = new Date();
-  const tomorrow = getTomorrowInTimeZone(now, config.timezone);
+  const today = getLocalDateInTimeZone(now, config.timezone);
 
-  if (isWeekendLocalDateParts(tomorrow)) {
-    logger.info("Skipping HO message because tomorrow is a weekend", {
-      targetDate: tomorrow.isoDate,
+  if (isWeekendLocalDateParts(today)) {
+    logger.info("Skipping HO message because today is a weekend", {
+      localDate: today.isoDate,
     });
     return;
   }
 
-  const targetDate = tomorrow.isoDate;
+  const targetDate = getNextWorkdayInTimeZone(now, config.timezone).isoDate;
   const existingMessage = stateStore.getLastHoMessage();
 
   if (existingMessage?.targetDate === targetDate) {

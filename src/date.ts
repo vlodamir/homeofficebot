@@ -76,6 +76,28 @@ export function getTomorrowInTimeZone(date: Date, timeZone: string): LocalDatePa
   };
 }
 
+export function getNextWorkdayInTimeZone(date: Date, timeZone: string): LocalDateParts {
+  const today = getLocalDateInTimeZone(date, timeZone);
+  let nextDate = new Date(Date.UTC(today.year, today.month - 1, today.day + 1));
+
+  while (nextDate.getUTCDay() === 0 || nextDate.getUTCDay() === 6) {
+    nextDate = new Date(Date.UTC(nextDate.getUTCFullYear(), nextDate.getUTCMonth(), nextDate.getUTCDate() + 1));
+  }
+
+  const year = nextDate.getUTCFullYear();
+  const month = nextDate.getUTCMonth() + 1;
+  const day = nextDate.getUTCDate();
+
+  return {
+    year,
+    month,
+    day,
+    hour: 0,
+    minute: 0,
+    isoDate: formatIsoDate({ year, month, day }),
+  };
+}
+
 export function getCzechWeekdayName(parts: LocalDateParts): string {
   const utcDate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
   const weekday = new Intl.DateTimeFormat("cs-CZ", {

@@ -9,6 +9,7 @@
     "dev": "tsx src/index.ts -- --config config.yaml",
     "send-now": "tsx src/sendNow.ts -- --config config.yaml",
     "start": "node dist/index.js -- --config config.yaml",
+    "test": "tsc -p tsconfig.test.json && node dist-test/tests/run-tests.js",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "engines": {
