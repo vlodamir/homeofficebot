@@ -12,10 +12,11 @@ test("getNextWorkdayInTimeZone returns Monday when the current local day is Frid
 
 test("getNextWorkdayInTimeZone returns the next day from Monday through Thursday", () => {
   const cases = [
+    ["2026-04-02T16:00:00Z", "2026-04-07"], // Easter
     ["2026-04-27T16:00:00Z", "2026-04-28"],
     ["2026-04-28T16:00:00Z", "2026-04-29"],
     ["2026-04-29T16:00:00Z", "2026-04-30"],
-    ["2026-04-30T16:00:00Z", "2026-05-01"],
+    ["2026-04-30T16:00:00Z", "2026-05-04"], // May 1 is a holiday (Labour Day), skip to Monday
   ] as const;
 
   for (const [now, expectedTargetDate] of cases) {
