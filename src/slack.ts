@@ -587,7 +587,7 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
               block_id: "planned_end_date",
               label: {
                 type: "plain_text",
-                text: "End Date (optional)",
+                text: "End Date",
               },
               element: {
                 type: "datepicker",
@@ -694,6 +694,625 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
         });
       } catch (error) {
         logger.error("Failed to update parent modal after adding planned OOO", error);
+      }
+    }
+  });
+}
+
+export function registerAdminHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, teamMemberIds: string[] = [], adminUserIds: string[] = []): void {
+  logger.info("Registering admin handlers");
+
+  // Command to manage user status
+  app.command("/hovnobot-user-status", async ({ ack, body, respond }) => {
+    await ack();
+
+    const userId = body.user_id;
+    if (!adminUserIds.includes(userId)) {
+      await respond({
+        text: "You do not have permission to use this command.",
+        response_type: "ephemeral",
+      });
+      return;
+    }
+
+    const trackedMessage = stateStore.getLastHoMessage();
+    if (!trackedMessage) {
+      await respond({
+        text: "No tracked HO message found. Please wait for the next scheduled message.",
+        response_type: "ephemeral",
+      });
+      return;
+    }
+
+    // Resolve team member names
+    const names = await Promise.all(teamMemberIds.map((id) => resolveUserDisplayName(app, id)));
+    const userNamePairs = teamMemberIds.map((id, index) => ({ id, name: names[index] }));
+    userNamePairs.sort((a, b) => a.name.localeCompare(b.name, "cs"));
+
+    try {
+      await app.client.views.open({
+        trigger_id: body.trigger_id,
+        view: {
+          type: "modal",
+          callback_id: "admin_user_status_modal",
+          title: {
+            type: "plain_text",
+            text: "Manage User Status",
+          },
+          submit: {
+            type: "plain_text",
+            text: "Apply",
+          },
+          blocks: [
+            {
+              type: "input",
+              block_id: "admin_user_select",
+              label: {
+                type: "plain_text",
+                text: "Select User",
+              },
+              element: {
+                type: "static_select",
+                action_id: "user_select",
+                options: userNamePairs.map((pair) => ({
+                  text: {
+                    type: "plain_text",
+                    text: pair.name,
+                  },
+                  value: pair.id,
+                })),
+              },
+            },
+            {
+              type: "input",
+              block_id: "admin_action_select",
+              label: {
+                type: "plain_text",
+                text: "Action",
+              },
+              element: {
+                type: "static_select",
+                action_id: "action_select",
+                options: [
+                  {
+                    text: {
+                      type: "plain_text",
+                      text: "Set Onsite",
+                    },
+                    value: "set_onsite",
+                  },
+                  {
+                    text: {
+                      type: "plain_text",
+                      text: "Set Home Office",
+                    },
+                    value: "set_ho",
+                  },
+                  {
+                    text: {
+                      type: "plain_text",
+                      text: "Set Vacation",
+                    },
+                    value: "set_vacation",
+                  },
+                  {
+                    text: {
+                      type: "plain_text",
+                      text: "Clear Status",
+                    },
+                    value: "clear_status",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      });
+    } catch (error) {
+      logger.error("Failed to open admin user status modal", error);
+      await respond({
+        text: "Failed to open the modal. Please try again.",
+        response_type: "ephemeral",
+      });
+    }
+  });
+
+  app.view("admin_user_status_modal", async ({ ack, body, view }) => {
+    const values = view.state.values;
+    const targetUserId = values.admin_user_select.user_select.selected_option?.value;
+    const action = values.admin_action_select.action_select.selected_option?.value;
+
+    if (!targetUserId || !action) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          admin_user_select: "Please select a user",
+        },
+      });
+      return;
+    }
+
+    await ack();
+
+    const trackedMessage = stateStore.getLastHoMessage();
+    if (!trackedMessage) {
+      logger.warn("No tracked message when applying admin action");
+      return;
+    }
+
+    // Apply the action
+    if (action === "set_onsite") {
+      stateStore.removeHoUser(targetUserId);
+      stateStore.removeVacationUser(targetUserId);
+      stateStore.addConfirmedOnsiteUser(targetUserId);
+    } else if (action === "set_ho") {
+      stateStore.removeConfirmedOnsiteUser(targetUserId);
+      stateStore.removeVacationUser(targetUserId);
+      stateStore.addHoUser(targetUserId);
+    } else if (action === "set_vacation") {
+      stateStore.removeConfirmedOnsiteUser(targetUserId);
+      stateStore.removeHoUser(targetUserId);
+      stateStore.addVacationUser(targetUserId);
+    } else if (action === "clear_status") {
+      stateStore.removeConfirmedOnsiteUser(targetUserId);
+      stateStore.removeHoUser(targetUserId);
+      stateStore.removeVacationUser(targetUserId);
+    }
+
+    await stateStore.saveState();
+
+    // Sync the HO message
+    try {
+      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
+    } catch (error) {
+      logger.error("Failed to sync HO message after admin action", error);
+    }
+  });
+
+  // Command to manage planned out of office
+  app.command("/hovnobot-ooo", async ({ ack, body, respond }) => {
+    await ack();
+
+    const userId = body.user_id;
+    if (!adminUserIds.includes(userId)) {
+      await respond({
+        text: "You do not have permission to use this command.",
+        response_type: "ephemeral",
+      });
+      return;
+    }
+
+    const trackedMessage = stateStore.getLastHoMessage();
+    const hasExpired = stateStore.cleanupExpiredPlannedOutOfOffice(trackedMessage?.targetDate || new Date().toISOString().split("T")[0]);
+    if (hasExpired) {
+      await stateStore.saveState();
+    }
+
+    const plannedEntries = stateStore.getPlannedOutOfOffice();
+
+    // Build modal with all planned entries and option to add more
+    const blocks: any[] = [];
+
+    if (plannedEntries.length === 0) {
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "No planned out of office entries.",
+        },
+      });
+    } else {
+      for (const entry of plannedEntries) {
+        const name = await resolveUserDisplayName(app, entry.userId);
+        const typeLabel = entry.type === "ho" ? "🏠 Home Office" : "🏝️ Vacation";
+        const endDateText = entry.endDate ? ` → ${entry.endDate}` : "";
+
+        blocks.push({
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `*${name}*\n${typeLabel}\n_${entry.startDate}${endDateText}_`,
+          },
+          accessory: {
+            type: "button",
+            text: {
+              type: "plain_text",
+              text: "Remove",
+            },
+            value: entry.id,
+            action_id: `admin_remove_planned_${entry.id}`,
+            style: "danger",
+          },
+        });
+      }
+    }
+
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: {
+            type: "plain_text",
+            text: "+ Add Entry",
+          },
+          action_id: "admin_add_planned_entry",
+          value: "add_entry",
+        },
+      ],
+    });
+
+    try {
+      await app.client.views.open({
+        trigger_id: body.trigger_id,
+        view: {
+          type: "modal",
+          callback_id: "admin_ooo_modal",
+          title: {
+            type: "plain_text",
+            text: "Manage Time Off",
+          },
+          blocks,
+        },
+      });
+    } catch (error) {
+      logger.error("Failed to open admin OOO modal", error);
+      await respond({
+        text: "Failed to open the modal. Please try again.",
+        response_type: "ephemeral",
+      });
+    }
+  });
+
+  app.action(/^admin_remove_planned_/, async ({ ack, body }) => {
+    logger.info("Admin remove planned OOO button clicked", { action_id: (body as any).actions?.[0]?.action_id });
+    await ack();
+
+    const userId = body.user.id;
+    if (!adminUserIds.includes(userId)) {
+      return;
+    }
+
+    const actionId = (body as any).actions[0].action_id;
+    const id = actionId.replace(/^admin_remove_planned_/, "");
+
+    if (!id) {
+      logger.warn("Could not extract ID from action_id", { actionId });
+      return;
+    }
+
+    stateStore.removePlannedOutOfOffice(id);
+    const trackedMessage = stateStore.getLastHoMessage();
+    stateStore.cleanupExpiredPlannedOutOfOffice(trackedMessage?.targetDate || new Date().toISOString().split("T")[0]);
+    await stateStore.saveState();
+
+    // Rebuild the modal
+    const plannedEntries = stateStore.getPlannedOutOfOffice();
+    const blocks: any[] = [];
+
+    if (plannedEntries.length === 0) {
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "No planned out of office entries.",
+        },
+      });
+    } else {
+      for (const entry of plannedEntries) {
+        const name = await resolveUserDisplayName(app, entry.userId);
+        const typeLabel = entry.type === "ho" ? "🏠 Home Office" : "🏝️ Vacation";
+        const endDateText = entry.endDate ? ` → ${entry.endDate}` : "";
+
+        blocks.push({
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `*${name}*\n${typeLabel}\n_${entry.startDate}${endDateText}_`,
+          },
+          accessory: {
+            type: "button",
+            text: {
+              type: "plain_text",
+              text: "Remove",
+            },
+            value: entry.id,
+            action_id: `admin_remove_planned_${entry.id}`,
+            style: "danger",
+          },
+        });
+      }
+    }
+
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: {
+            type: "plain_text",
+            text: "+ Add Entry",
+          },
+          action_id: "admin_add_planned_entry",
+          value: "add_entry",
+        },
+      ],
+    });
+
+    await app.client.views.update({
+      view_id: (body as any).view.id,
+      view: {
+        type: "modal",
+        callback_id: "admin_ooo_modal",
+        title: {
+          type: "plain_text",
+          text: "Manage Time Off",
+        },
+        blocks,
+      },
+    });
+
+    // Sync the HO message
+    try {
+      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
+    } catch (error) {
+      logger.error("Failed to sync HO message after admin removing planned OOO", error);
+    }
+  });
+
+  app.action("admin_add_planned_entry", async ({ ack, body }) => {
+    logger.info("Admin add planned entry button clicked");
+    await ack();
+
+    const userId = body.user.id;
+    if (!adminUserIds.includes(userId)) {
+      return;
+    }
+
+    // Resolve team member names for user selection
+    const names = await Promise.all(teamMemberIds.map((id) => resolveUserDisplayName(app, id)));
+    const userNamePairs = teamMemberIds.map((id, index) => ({ id, name: names[index] }));
+    userNamePairs.sort((a, b) => a.name.localeCompare(b.name, "cs"));
+
+    try {
+      logger.info("Opening admin add planned OOO modal");
+
+      await app.client.views.push({
+        trigger_id: (body as any).trigger_id,
+        view: {
+          type: "modal",
+          callback_id: "admin_add_planned_ooo_form",
+          title: {
+            type: "plain_text",
+            text: "Add Time Off Entry",
+          },
+          submit: {
+            type: "plain_text",
+            text: "Add",
+          },
+          blocks: [
+            {
+              type: "input",
+              block_id: "admin_ooo_user",
+              label: {
+                type: "plain_text",
+                text: "User",
+              },
+              element: {
+                type: "static_select",
+                action_id: "user_select",
+                options: userNamePairs.map((pair) => ({
+                  text: {
+                    type: "plain_text",
+                    text: pair.name,
+                  },
+                  value: pair.id,
+                })),
+              },
+            },
+            {
+              type: "input",
+              block_id: "admin_ooo_type",
+              label: {
+                type: "plain_text",
+                text: "Type",
+              },
+              element: {
+                type: "static_select",
+                action_id: "type_select",
+                options: [
+                  {
+                    text: {
+                      type: "plain_text",
+                      text: "🏠 Home Office",
+                    },
+                    value: "ho",
+                  },
+                  {
+                    text: {
+                      type: "plain_text",
+                      text: "🏝️ Vacation",
+                    },
+                    value: "vacation",
+                  },
+                ],
+              },
+            },
+            {
+              type: "input",
+              block_id: "admin_ooo_start_date",
+              label: {
+                type: "plain_text",
+                text: "Start Date",
+              },
+              element: {
+                type: "datepicker",
+                action_id: "start_date_picker",
+              },
+            },
+            {
+              type: "input",
+              block_id: "admin_ooo_end_date",
+              label: {
+                type: "plain_text",
+                text: "End Date",
+              },
+              element: {
+                type: "datepicker",
+                action_id: "end_date_picker",
+              },
+              optional: true,
+            },
+          ],
+        },
+      });
+      logger.info("Admin modal opened successfully");
+    } catch (error) {
+      logger.error("Failed to open admin add planned OOO modal", error);
+    }
+  });
+
+  app.view("admin_add_planned_ooo_form", async ({ ack, body, view }) => {
+    const userId = body.user.id;
+    if (!adminUserIds.includes(userId)) {
+      await ack();
+      return;
+    }
+
+    const values = view.state.values;
+    logger.info("Admin add planned form submitted", { values });
+
+    const targetUserId = values.admin_ooo_user.user_select.selected_option?.value;
+    const type = values.admin_ooo_type.type_select.selected_option?.value as "ho" | "vacation";
+    const startDate = values.admin_ooo_start_date.start_date_picker.selected_date;
+    const endDate = values.admin_ooo_end_date?.end_date_picker?.selected_date;
+
+    if (!targetUserId || !type || !startDate) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          admin_ooo_start_date: "Start date is required",
+        },
+      });
+      return;
+    }
+
+    // Check for overlapping entries
+    const plannedEntries = stateStore.getPlannedOutOfOffice();
+    const overlappingEntry = findOverlappingPlannedOOO(targetUserId, startDate as string, endDate ?? undefined, plannedEntries);
+
+    if (overlappingEntry) {
+      const existingRange = formatDateRange(overlappingEntry.startDate, overlappingEntry.endDate);
+
+      await ack({
+        response_action: "errors",
+        errors: {
+          admin_ooo_start_date: `User already has a planned time off from ${existingRange}. Remove or modify that entry first.`,
+        },
+      });
+      return;
+    }
+
+    await ack();
+
+    const entry: PlannedOutOfOffice = {
+      id: randomUUID(),
+      userId: targetUserId,
+      type,
+      startDate: startDate as string,
+      endDate: endDate ?? undefined,
+    };
+
+    logger.info("Admin creating planned entry", { entry });
+    stateStore.addPlannedOutOfOffice(entry);
+
+    // If the planned entry starts today, remove the user from today's votes
+    const trackedMessage = stateStore.getLastHoMessage();
+    if (trackedMessage && isDateInRange(trackedMessage.targetDate, entry.startDate, entry.endDate)) {
+      stateStore.removeConfirmedOnsiteUser(targetUserId);
+      stateStore.removeHoUser(targetUserId);
+      stateStore.removeVacationUser(targetUserId);
+    }
+
+    await stateStore.saveState();
+
+    // Sync the HO message
+    try {
+      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
+    } catch (error) {
+      logger.error("Failed to sync HO message after admin adding planned OOO", error);
+    }
+
+    // Update parent modal
+    const previousViewId = (body as any).view.previous_view_id;
+    if (previousViewId) {
+      try {
+        const updatedEntries = stateStore.getPlannedOutOfOffice();
+        const blocks: any[] = [];
+
+        if (updatedEntries.length === 0) {
+          blocks.push({
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "No planned out of office entries.",
+            },
+          });
+        } else {
+          for (const entry of updatedEntries) {
+            const name = await resolveUserDisplayName(app, entry.userId);
+            const typeLabel = entry.type === "ho" ? "🏠 Home Office" : "🏝️ Vacation";
+            const endDateText = entry.endDate ? ` → ${entry.endDate}` : "";
+
+            blocks.push({
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `*${name}*\n${typeLabel}\n_${entry.startDate}${endDateText}_`,
+              },
+              accessory: {
+                type: "button",
+                text: {
+                  type: "plain_text",
+                  text: "Remove",
+                },
+                value: entry.id,
+                action_id: `admin_remove_planned_${entry.id}`,
+                style: "danger",
+              },
+            });
+          }
+        }
+
+        blocks.push({
+          type: "actions",
+          elements: [
+            {
+              type: "button",
+              text: {
+                type: "plain_text",
+                text: "+ Add Entry",
+              },
+              action_id: "admin_add_planned_entry",
+              value: "add_entry",
+            },
+          ],
+        });
+
+        await app.client.views.update({
+          view_id: previousViewId,
+          view: {
+            type: "modal",
+            callback_id: "admin_ooo_modal",
+            title: {
+              type: "plain_text",
+              text: "Manage Time Off",
+            },
+            blocks,
+          },
+        });
+      } catch (error) {
+        logger.error("Failed to update parent modal after admin adding planned OOO", error);
       }
     }
   });

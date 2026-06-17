@@ -7,6 +7,7 @@ export interface AppConfig {
   postMinute: number;
   stateFilePath: string;
   teamMembers: string[];
+  adminUsers: string[];
 }
 
 export interface PlannedOutOfOffice {

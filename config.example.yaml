@@ -35,4 +35,12 @@ teamMembers:
   - "U0AS9HYNR30"  # Bob
   - "U0AS9HYNR31"  # Charlie
 
+# List of admin users (use Slack user IDs)
+# Admin users have special permissions:
+# - Manage other users' onsite/home office/PTO status and clear it
+# - Access planned out of office information through a separate command
+# - View, add, and delete out of office entries
+adminUsers:
+  - "U0AS9HYNR29"  # Alice
+
 
