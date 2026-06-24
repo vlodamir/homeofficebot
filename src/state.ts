@@ -7,6 +7,7 @@ import { HOMessageState, StoredState, PlannedOutOfOffice } from "./types";
 const DEFAULT_STATE: StoredState = {
   lastHoMessage: null,
   plannedOutOfOffice: [],
+  teamMembers: [],
 };
 
 export class StateStore {
@@ -31,6 +32,7 @@ export class StateStore {
       this.state = {
         lastHoMessage: parsed.lastHoMessage ?? null,
         plannedOutOfOffice: plannedEntries,
+        teamMembers: parsed.teamMembers ?? [],
       };
 
       logger.info("State loaded", this.state);
@@ -56,6 +58,7 @@ export class StateStore {
     this.state = {
       lastHoMessage: message ? { ...message, hoUsers: message.hoUsers ?? [], vacationUsers: message.vacationUsers ?? [] } : null,
       plannedOutOfOffice: this.state.plannedOutOfOffice ?? [],
+      teamMembers: this.state.teamMembers ?? [],
     };
 
     await this.save();
@@ -126,6 +129,27 @@ export class StateStore {
 
   getPlannedOutOfOffice(): PlannedOutOfOffice[] {
     return this.state.plannedOutOfOffice ?? [];
+  }
+
+  getTeamMembers(): string[] {
+    return this.state.teamMembers ?? [];
+  }
+
+  setTeamMembers(teamMemberIds: string[]): void {
+    const normalized = Array.from(new Set(teamMemberIds));
+    this.state.teamMembers = normalized;
+
+    if (this.state.lastHoMessage) {
+      const filterValid = (userIds: string[] = []) => userIds.filter((id) => normalized.includes(id));
+
+      this.state.lastHoMessage.confirmedOnsiteUsers = filterValid(this.state.lastHoMessage.confirmedOnsiteUsers ?? []);
+      this.state.lastHoMessage.hoUsers = filterValid(this.state.lastHoMessage.hoUsers ?? []);
+      this.state.lastHoMessage.vacationUsers = filterValid(this.state.lastHoMessage.vacationUsers ?? []);
+    }
+
+    if (this.state.plannedOutOfOffice) {
+      this.state.plannedOutOfOffice = this.state.plannedOutOfOffice.filter((entry) => normalized.includes(entry.userId));
+    }
   }
 
   addPlannedOutOfOffice(entry: PlannedOutOfOffice): void {

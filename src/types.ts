@@ -6,8 +6,8 @@ export interface AppConfig {
   postHour: number;
   postMinute: number;
   stateFilePath: string;
-  teamMembers: string[];
   adminUsers: string[];
+  teamMembers?: string[];
 }
 
 export interface PlannedOutOfOffice {
@@ -31,6 +31,7 @@ export interface HOMessageState {
 export interface StoredState {
   lastHoMessage: HOMessageState | null;
   plannedOutOfOffice: PlannedOutOfOffice[];
+  teamMembers: string[];
 }
 
 export interface LocalDateParts {

@@ -56,6 +56,8 @@ timezone: "Europe/Prague"
 stateFilePath: "data/state.json"
 ```
 
+Team members are no longer configured in YAML. Use the Slack admin slash command `/hovnobot-team-members` to add or remove tracked users.
+
 | Položka | Popis | Výchozí |
 |---|---|---|
 | `slackBotToken` | Bot User OAuth Token (`xoxb-...`) | — (povinné) |
@@ -65,6 +67,8 @@ stateFilePath: "data/state.json"
 | `postHour` | Hodina odeslání (0–23) | `18` |
 | `postMinute` | Minuta odeslání (0–59) | `0` |
 | `stateFilePath` | Cesta k souboru stavu | `data/state.json` |
+
+Team members are now stored in the state file (`data/state.json`) and managed with the new slash command `/hovnobot-team-members`.
 
 ## Nastavení Slack app
 

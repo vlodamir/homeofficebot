@@ -17,7 +17,7 @@ async function sendNow(): Promise<void> {
 
   logger.info("Sending HO message now (manual trigger)", { targetDate });
 
-  const trackedMessage = await postHoMessage(app, config.slackChannelId, targetDate, config.teamMembers, stateStore);
+  const trackedMessage = await postHoMessage(app, config.slackChannelId, targetDate, stateStore.getTeamMembers(), stateStore);
   await stateStore.setLastHoMessage(trackedMessage);
 
   logger.info("Done", { messageTs: trackedMessage.messageTs });

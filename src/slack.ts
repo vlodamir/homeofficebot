@@ -254,7 +254,7 @@ export async function getVacationUsers(app: App, vacationUsers: string[], botUse
   return names.sort((left, right) => left.localeCompare(right, "cs"));
 }
 
-export async function syncTrackedHoMessage(app: App, stateStore: StateStore, runtime: RuntimeContext, teamMemberIds: string[] = []): Promise<void> {
+export async function syncTrackedHoMessage(app: App, stateStore: StateStore, runtime: RuntimeContext): Promise<void> {
   const trackedMessage = stateStore.getLastHoMessage();
 
   if (!trackedMessage) {
@@ -303,6 +303,7 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
   plannedVacationNames.sort();
   
   // Resolve names for team members and create proper ID-to-name mapping
+  const teamMemberIds = stateStore.getTeamMembers();
   const names = await Promise.all(teamMemberIds.map((userId) => resolveUserDisplayName(app, userId)));
   const userIdToName = new Map<string, string>();
   for (let i = 0; i < teamMemberIds.length; i++) {
@@ -360,7 +361,7 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
   });
 }
 
-export function registerButtonHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, teamMemberIds: string[] = []): void {
+export function registerButtonHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext): void {
   app.action(/^user_state_button_(onsite|ho|vacation)$/, async ({ ack, body }) => {
     await ack();
 
@@ -416,7 +417,7 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
     await stateStore.saveState();
 
     try {
-      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
+      await syncTrackedHoMessage(app, stateStore, runtime);
     } catch (error) {
       logger.error("Failed to sync HO message after button click", error);
     }
@@ -475,7 +476,7 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
   });
 }
 
-export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, teamMemberIds: string[] = []): void {
+export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext): void {
   logger.info("Registering planned OOO handlers");
 
   app.action(/^remove_planned_/, async ({ ack, body }) => {
@@ -515,7 +516,7 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
 
     // Sync the HO message to reflect changes
     try {
-      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
+      await syncTrackedHoMessage(app, stateStore, runtime);
     } catch (error) {
       logger.error("Failed to sync HO message after removing planned OOO", error);
     }
@@ -668,7 +669,7 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
 
     // Sync the HO message to reflect changes
     try {
-      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
+      await syncTrackedHoMessage(app, stateStore, runtime);
     } catch (error) {
       logger.error("Failed to sync HO message after adding planned OOO", error);
     }
@@ -699,10 +700,91 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
   });
 }
 
-export function registerAdminHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, teamMemberIds: string[] = [], adminUserIds: string[] = []): void {
+export function registerAdminHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, adminUserIds: string[] = []): void {
   logger.info("Registering admin handlers");
 
   // Command to manage user status
+  app.command("/hovnobot-team-members", async ({ ack, body, respond }) => {
+    await ack();
+
+    const userId = body.user_id;
+    if (!adminUserIds.includes(userId)) {
+      await respond({
+        text: "You do not have permission to use this command.",
+        response_type: "ephemeral",
+      });
+      return;
+    }
+
+    const members = stateStore.getTeamMembers();
+    const memberNames = await Promise.all(members.map((id) => resolveUserDisplayName(app, id)));
+    const currentMembersText = members.length > 0
+      ? members.map((id, index) => `• ${memberNames[index]}`).join("\n")
+      : "No team members configured yet.";
+
+    try {
+      await app.client.views.open({
+        trigger_id: body.trigger_id,
+        view: {
+          type: "modal",
+          callback_id: "admin_team_members_modal",
+          title: {
+            type: "plain_text",
+            text: "Team Members",
+          },
+          submit: {
+            type: "plain_text",
+            text: "Save",
+          },
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `*Current team members:*\n${currentMembersText}`,
+              },
+            },
+            {
+              type: "input",
+              block_id: "team_members",
+              label: {
+                type: "plain_text",
+                text: "Select team members",
+              },
+              element: {
+                type: "multi_users_select",
+                action_id: "selected_users",
+                initial_users: members,
+              },
+            },
+          ],
+        },
+      });
+    } catch (error) {
+      logger.error("Failed to open team members modal", error);
+      await respond({
+        text: "Failed to open the modal. Please try again.",
+        response_type: "ephemeral",
+      });
+    }
+  });
+
+  app.view("admin_team_members_modal", async ({ ack, body, view }) => {
+    const values = view.state.values;
+    const selectedUsers = values.team_members.selected_users.selected_users || [];
+
+    await ack();
+
+    stateStore.setTeamMembers(selectedUsers);
+    await stateStore.saveState();
+
+    try {
+      await syncTrackedHoMessage(app, stateStore, runtime);
+    } catch (error) {
+      logger.error("Failed to sync HO message after team member update", error);
+    }
+  });
+
   app.command("/hovnobot-user-status", async ({ ack, body, respond }) => {
     await ack();
 
@@ -725,8 +807,9 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
     }
 
     // Resolve team member names
-    const names = await Promise.all(teamMemberIds.map((id) => resolveUserDisplayName(app, id)));
-    const userNamePairs = teamMemberIds.map((id, index) => ({ id, name: names[index] }));
+    const members = stateStore.getTeamMembers();
+    const names = await Promise.all(members.map((id) => resolveUserDisplayName(app, id)));
+    const userNamePairs = members.map((id, index) => ({ id, name: names[index] }));
     userNamePairs.sort((a, b) => a.name.localeCompare(b.name, "cs"));
 
     try {
@@ -863,7 +946,7 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
 
     // Sync the HO message
     try {
-      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
+      await syncTrackedHoMessage(app, stateStore, runtime);
     } catch (error) {
       logger.error("Failed to sync HO message after admin action", error);
     }
@@ -1054,7 +1137,7 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
 
     // Sync the HO message
     try {
-      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
+      await syncTrackedHoMessage(app, stateStore, runtime);
     } catch (error) {
       logger.error("Failed to sync HO message after admin removing planned OOO", error);
     }
@@ -1070,8 +1153,9 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
     }
 
     // Resolve team member names for user selection
-    const names = await Promise.all(teamMemberIds.map((id) => resolveUserDisplayName(app, id)));
-    const userNamePairs = teamMemberIds.map((id, index) => ({ id, name: names[index] }));
+    const members = stateStore.getTeamMembers();
+    const names = await Promise.all(members.map((id) => resolveUserDisplayName(app, id)));
+    const userNamePairs = members.map((id, index) => ({ id, name: names[index] }));
     userNamePairs.sort((a, b) => a.name.localeCompare(b.name, "cs"));
 
     try {
@@ -1238,7 +1322,7 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
 
     // Sync the HO message
     try {
-      await syncTrackedHoMessage(app, stateStore, runtime, teamMemberIds);
+      await syncTrackedHoMessage(app, stateStore, runtime);
     } catch (error) {
       logger.error("Failed to sync HO message after admin adding planned OOO", error);
     }

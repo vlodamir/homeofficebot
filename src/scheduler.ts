@@ -32,7 +32,7 @@ export async function publishScheduledHoMessage(
   }
 
   try {
-    const trackedMessage = await postHoMessage(app, config.slackChannelId, targetDate, config.teamMembers, stateStore);
+    const trackedMessage = await postHoMessage(app, config.slackChannelId, targetDate, stateStore.getTeamMembers(), stateStore);
     await stateStore.setLastHoMessage(trackedMessage);
 
     logger.info("Scheduled HO message published", {

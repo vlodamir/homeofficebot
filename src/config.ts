@@ -88,8 +88,8 @@ export function loadConfig(): AppConfig {
     process.cwd(),
     (config.stateFilePath as string) || "data/state.json"
   );
-  const teamMembers = (config.teamMembers as string[]) || [];
   const adminUsers = (config.adminUsers as string[]) || [];
+  const teamMembers = (config.teamMembers as string[]) || [];
 
   return {
     slackBotToken: requireField(config, "slackBotToken"),
@@ -99,8 +99,8 @@ export function loadConfig(): AppConfig {
     postHour,
     postMinute,
     stateFilePath,
-    teamMembers,
     adminUsers,
+    teamMembers,
   };
 }
 

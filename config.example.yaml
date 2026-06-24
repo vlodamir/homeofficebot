@@ -27,14 +27,6 @@ timezone: "Europe/Prague"
 # defaults to "data/state.json"
 stateFilePath: "data/state.json"
 
-# List of team members (use Slack user IDs, not names, so changes to display names won't affect the list)
-# Team members not marked as home office or vacation are listed as in-office
-# You can find user IDs by right-clicking a user in Slack and selecting "Copy user ID"
-teamMembers:
-  - "U0AS9HYNR29"  # Alice
-  - "U0AS9HYNR30"  # Bob
-  - "U0AS9HYNR31"  # Charlie
-
 # List of admin users (use Slack user IDs)
 # Admin users have special permissions:
 # - Manage other users' onsite/home office/PTO status and clear it
