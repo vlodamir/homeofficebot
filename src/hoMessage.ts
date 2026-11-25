@@ -1,3 +1,56 @@
+import { PlannedOutOfOffice } from "./types";
+
+export function buildShowAllBlocks(
+  inOfficeNames: string[],
+  plannedEntries: PlannedOutOfOffice[],
+  today: string,
+  userNames: ReadonlyMap<string, string> = new Map(),
+): any[] {
+  const entries = plannedEntries
+    .filter((entry) => !entry.endDate || entry.endDate >= today)
+    .sort((left, right) => left.startDate.localeCompare(right.startDate));
+
+  const absenceLines = entries.map((entry) => {
+    // ISO dates parsed at UTC midnight give calendar days, unaffected by DST.
+    const daysUntilStart = (Date.parse(entry.startDate) - Date.parse(today)) / 86_400_000;
+    const timing = daysUntilStart < 0
+      ? "Ongoing"
+      : daysUntilStart === 0
+        ? "Starts today"
+        : `Starts in ${daysUntilStart} ${daysUntilStart === 1 ? "day" : "days"}`;
+    const typeLabel = entry.type === "ho" ? "🏠 Home Office" : "🏝️ Vacation";
+    const dateRange = `${entry.startDate} → ${entry.endDate || "No end date"}`;
+    const name = (userNames.get(entry.userId) || entry.userId)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return `• ${name} — ${typeLabel}\n  ${dateRange} · ${timing}`;
+  });
+
+  // Split long lists into sections to stay within Slack's section text limit.
+  const sections = (lines: string[], emptyText: string): any[] => {
+    const chunks: string[] = [];
+    for (const line of lines) {
+      const last = chunks.length - 1;
+      if (last >= 0 && chunks[last].length + line.length + 1 <= 3000) {
+        chunks[last] += `\n${line}`;
+      } else {
+        chunks.push(line);
+      }
+    }
+    return (chunks.length ? chunks : [emptyText]).map((text) => ({
+      type: "section",
+      text: { type: "mrkdwn", text },
+    }));
+  };
+
+  return [
+    { type: "header", text: { type: "plain_text", text: "Onsite" } },
+    ...sections(inOfficeNames.map((name) => `• ${name}`), "No teammates onsite."),
+    { type: "divider" },
+    { type: "header", text: { type: "plain_text", text: "📅 Team planned absences" } },
+    ...sections(absenceLines, "No planned absences for the team."),
+  ];
+}
+
 export function buildHoMessageBlocks(
   dayName: string,
   homeOfficeNames: string[] = [],

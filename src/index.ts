@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   const botUserId = await resolveBotUserId(app);
   const runtime = { botUserId };
 
-  registerButtonHandlers(app, stateStore, runtime);
+  registerButtonHandlers(app, stateStore, runtime, config.timezone);
   registerPlannedOOOHandlers(app, stateStore, runtime);
   registerAdminHandlers(app, stateStore, runtime, config.adminUsers);
 

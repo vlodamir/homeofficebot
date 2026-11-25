@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { App } from "@slack/bolt";
-import { buildHoMessageBlocks } from "./hoMessage";
+import { buildHoMessageBlocks, buildShowAllBlocks } from "./hoMessage";
 import { logger } from "./logger";
 import { StateStore } from "./state";
 import { AppConfig, HOMessageState, RuntimeContext, PlannedOutOfOffice } from "./types";
-import { getCzechWeekdayNameFromIso } from "./date";
+import { getCzechWeekdayNameFromIso, getLocalDateInTimeZone } from "./date";
 
 export function createSlackApp(config: AppConfig): App {
   return new App({
@@ -361,7 +361,7 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
   });
 }
 
-export function registerButtonHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext): void {
+export function registerButtonHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, timezone: string): void {
   app.action(/^user_state_button_(onsite|ho|vacation)$/, async ({ ack, body }) => {
     await ack();
 
@@ -453,24 +453,24 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
     await ack();
     
     const inOfficeNames = JSON.parse((body as any).actions[0].value) as string[];
+    const today = getLocalDateInTimeZone(new Date(), timezone).isoDate;
+    const plannedEntries = stateStore.getPlannedOutOfOffice();
+    const userIds = [...new Set(plannedEntries
+      .filter((entry) => !entry.endDate || entry.endDate >= today)
+      .map((entry) => entry.userId))];
+    const userNames = new Map(await Promise.all(userIds.map(async (userId) =>
+      [userId, await resolveUserDisplayName(app, userId)] as const
+    )));
     await app.client.views.open({
       trigger_id: (body as any).trigger_id,
       view: {
         type: "modal",
-        callback_id: "planned_ooo_modal",
+        callback_id: "show_all_modal",
         title: {
           type: "plain_text",
-          text: "Onsite",
+          text: "Team overview",
         },
-        blocks: [
-          {
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `${inOfficeNames.map((name) => `• ${name}`).join("\n")}`,
-            }
-          },
-        ],
+        blocks: buildShowAllBlocks(inOfficeNames, plannedEntries, today, userNames),
       },
     });
   });
