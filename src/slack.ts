@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { App, type BlockAction, type ButtonAction, type types } from "@slack/bolt";
 import { buildHoMessageBlocks } from "./hoMessage";
 import { logger } from "./logger";
-import { StateStore } from "./state";
+import type { AttendanceVote, StateStore } from "./state";
 import { AppConfig, HOMessageState, RuntimeContext, PlannedOutOfOffice } from "./types";
 import { getCzechWeekdayNameFromIso, getLocalDateInTimeZone } from "./date";
 import { registerVacationModal } from "./vacationModal";
@@ -46,13 +46,9 @@ export async function postHoMessage(app: App, channelId: string, targetDate: str
   
   // Filter out planned out of office entries if stateStore is provided
   if (stateStore) {
-    const plannedEntries = stateStore.getPlannedOutOfOffice();
-    const plannedHoEntries = plannedEntries.filter(
-      (entry) => entry.type === "ho" && isDateInRange(targetDate, entry.startDate, entry.endDate)
-    );
-    const plannedVacationEntries = plannedEntries.filter(
-      (entry) => entry.type === "vacation" && isDateInRange(targetDate, entry.startDate, entry.endDate)
-    );
+    const plannedEntries = stateStore.getPlannedOutOfOfficeOn(targetDate);
+    const plannedHoEntries = plannedEntries.filter((entry) => entry.type === "ho");
+    const plannedVacationEntries = plannedEntries.filter((entry) => entry.type === "vacation");
     
     // Get names for planned users with date ranges
     for (const entry of plannedHoEntries) {
@@ -124,16 +120,6 @@ async function resolveTeamMemberNames(app: App, teamMemberIds: string[]): Promis
   return names.sort((left, right) => left.localeCompare(right, "cs"));
 }
 
-function isDateInRange(targetDate: string, startDate: string, endDate?: string): boolean {
-  if (targetDate < startDate) {
-    return false;
-  }
-  if (endDate && targetDate > endDate) {
-    return false;
-  }
-  return true;
-}
-
 function formatDateRange(startDate: string, endDate?: string): string {
   const start = new Date(startDate + "T00:00:00");
   const end = endDate ? new Date(endDate + "T00:00:00") : start;
@@ -162,88 +148,47 @@ function formatDateRange(startDate: string, endDate?: string): string {
   return `${startMonth} ${startDay} - ${endMonth} ${endDay}`;
 }
 
-function doDateRangesOverlap(
-  start1: string,
-  end1: string | undefined,
-  start2: string,
-  end2: string | undefined
-): boolean {
-  // If either range has no end date, we consider it as extending to a far future date
-  const effectiveEnd1 = end1 || "2099-12-31";
-  const effectiveEnd2 = end2 || "2099-12-31";
-
-  // Two ranges overlap if: start1 <= end2 AND start2 <= end1
-  return start1 <= effectiveEnd2 && start2 <= effectiveEnd1;
-}
-
-function findOverlappingPlannedOOO(
-  userId: string,
-  startDate: string,
-  endDate: string | undefined,
-  plannedEntries: PlannedOutOfOffice[]
-): PlannedOutOfOffice | undefined {
-  return plannedEntries.find(
-    (entry) =>
-      entry.userId === userId &&
-      doDateRangesOverlap(startDate, endDate, entry.startDate, entry.endDate)
-  );
-}
-
-function buildPlannedOOOModal(userId: string, plannedEntries: PlannedOutOfOffice[]): any[] {
-  const blocks: any[] = [];
-
-  if (plannedEntries.length === 0) {
-    blocks.push({
+function buildPlannedOOOBlocks(entries: PlannedOutOfOffice[], names?: string[]): types.ModalView["blocks"] {
+  const prefix = names ? "admin_" : "";
+  const blocks: types.ModalView["blocks"] = entries.map((entry, index) => {
+    const name = names ? `*${names[index]}*\n` : "";
+    const typeLabel = entry.type === "ho" ? "🏠 Home Office" : "🏝️ Vacation";
+    const endDateText = entry.endDate ? ` → ${entry.endDate}` : "";
+    return {
       type: "section",
-      text: {
-        type: "mrkdwn",
-        text: "No planned out of office entries.",
+      text: { type: "mrkdwn", text: `${name}${typeLabel}\n_${entry.startDate}${endDateText}_` },
+      accessory: {
+        type: "button",
+        text: { type: "plain_text", text: "Remove" },
+        value: entry.id,
+        action_id: `${prefix}remove_planned_${entry.id}`,
+        style: "danger",
       },
-    });
-  } else {
-    plannedEntries.forEach((entry) => {
-      if (entry.userId !== userId) {
-        return; // Only show entries for the current user
-      }
-
-      const typeLabel = entry.type === "ho" ? "🏠 Home Office" : "🏝️ Vacation";
-      const endDateText = entry.endDate ? ` → ${entry.endDate}` : "";
-      blocks.push({
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `${typeLabel}\n_${entry.startDate}${endDateText}_`,
-        },
-        accessory: {
-          type: "button",
-          text: {
-            type: "plain_text",
-            text: "Remove",
-          },
-          value: entry.id,
-          action_id: `remove_planned_${entry.id}`,
-          style: "danger",
-        },
-      });
-    });
+    };
+  });
+  if (blocks.length === 0) {
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: "No planned out of office entries." } });
   }
-
   blocks.push({
     type: "actions",
-    elements: [
-      {
-        type: "button",
-        text: {
-          type: "plain_text",
-          text: "+ Add Entry",
-        },
-        action_id: "add_planned_entry",
-        value: "add_entry",
-      },
-    ],
+    elements: [{
+      type: "button",
+      text: { type: "plain_text", text: "+ Add Entry" },
+      action_id: `${prefix}add_planned_entry`,
+      value: "add_entry",
+    }],
   });
-
   return blocks;
+}
+
+async function buildAdminPlannedOOOView(app: App, entries: PlannedOutOfOffice[]): Promise<types.ModalView> {
+  const names = await Promise.all(entries.map((entry) => resolveUserDisplayName(app, entry.userId)));
+  return {
+    type: "modal",
+    callback_id: "admin_ooo_modal",
+    title: { type: "plain_text", text: "Manage Time Off" },
+    blocks: buildPlannedOOOBlocks(entries, names),
+  };
 }
 
 export async function getHomeOfficeUsers(app: App, hoUsers: string[], botUserId: string): Promise<string[]> {
@@ -268,24 +213,12 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
     return;
   }
 
-  // Clean up expired planned out of office entries
-  const hasExpired = stateStore.cleanupExpiredPlannedOutOfOffice(trackedMessage.targetDate);
-  if (hasExpired) {
-    await stateStore.saveState();
-  }
-
   const confirmedOnsiteUsers = trackedMessage.confirmedOnsiteUsers ?? [];
   const hoUsers = trackedMessage.hoUsers ?? [];
   const vacationUsers = trackedMessage.vacationUsers ?? [];
-  const plannedEntries = stateStore.getPlannedOutOfOffice();
-
-  // Get users from planned entries for today
-  const plannedHoEntries = plannedEntries.filter(
-    (entry) => entry.type === "ho" && isDateInRange(trackedMessage.targetDate, entry.startDate, entry.endDate)
-  );
-  const plannedVacationEntries = plannedEntries.filter(
-    (entry) => entry.type === "vacation" && isDateInRange(trackedMessage.targetDate, entry.startDate, entry.endDate)
-  );
+  const plannedEntries = stateStore.getPlannedOutOfOfficeOn(trackedMessage.targetDate);
+  const plannedHoEntries = plannedEntries.filter((entry) => entry.type === "ho");
+  const plannedVacationEntries = plannedEntries.filter((entry) => entry.type === "vacation");
 
   // Get names for voted users (only those who voted today, not planned)
   const homeOfficeUsers = await getHomeOfficeUsers(app, hoUsers, runtime.botUserId);
@@ -367,60 +300,25 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
   });
 }
 
-export function registerButtonHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, timezone: string, stateFilePath?: string): void {
-  app.action(/^user_state_button_(onsite|ho|vacation)$/, async ({ ack, body }) => {
+export function registerButtonHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, timezone: string, vacationCachePrefix?: string): void {
+  app.action<BlockAction<ButtonAction>>(/^user_state_button_(onsite|ho|vacation)$/, async ({ ack, action, body }) => {
     await ack();
 
-    const trackedMessage = stateStore.getLastHoMessage();
-    if (!trackedMessage || trackedMessage.messageTs !== (body as any).message.ts) {
-      return;
-    }
-
+    const channelId = body.channel?.id ?? body.container.channel_id;
+    const messageTs = body.message?.ts ?? body.container.message_ts;
+    const status = action.value;
+    if (!channelId || !messageTs || (status !== "onsite" && status !== "ho" && status !== "vacation")) return;
     const userId = body.user.id;
-
-    // Check if user has a planned vacation or HO today
-    const plannedEntries = stateStore.getPlannedOutOfOffice();
-    const hasPlannedOOO = plannedEntries.some(
-      (entry) => entry.userId === userId && isDateInRange(trackedMessage.targetDate, entry.startDate, entry.endDate)
-    );
-
-    if (hasPlannedOOO) {
+    const result = stateStore.toggleAttendanceVote({ channelId, messageTs }, userId, status);
+    if (result === "stale") return;
+    if (result === "planned") {
       await app.client.chat.postEphemeral({
-        channel: trackedMessage.channelId,
+        channel: channelId,
         user: userId,
         text: "You cannot change your status for today because you have a planned time off entry. Remove it from the Planned Out of Office list first.",
       });
       return;
     }
-    
-    const action = (body as any).actions[0].value;
-    if (action === "onsite") {
-      if (trackedMessage.confirmedOnsiteUsers?.includes(userId)) {
-        stateStore.removeConfirmedOnsiteUser(userId);
-      } else {
-        stateStore.addConfirmedOnsiteUser(userId);
-        stateStore.removeHoUser(userId);
-        stateStore.removeVacationUser(userId);
-      }
-    } else if (action === "ho") {
-      if (trackedMessage.hoUsers?.includes(userId)) {
-        stateStore.removeHoUser(userId);
-      } else {
-        stateStore.addHoUser(userId);
-        stateStore.removeConfirmedOnsiteUser(userId);
-        stateStore.removeVacationUser(userId);
-      }
-    } else if (action === "vacation") {
-      if (trackedMessage.vacationUsers?.includes(userId)) {
-        stateStore.removeVacationUser(userId);
-      } else {
-        stateStore.addVacationUser(userId);
-        stateStore.removeConfirmedOnsiteUser(userId);
-        stateStore.removeHoUser(userId);
-      }
-    }
-
-    await stateStore.saveState();
 
     try {
       await syncTrackedHoMessage(app, stateStore, runtime);
@@ -432,15 +330,8 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
   app.action<BlockAction<ButtonAction>>("planned_ooo_button", async ({ ack, body }) => {
     await ack();
 
-    const trackedMessage = stateStore.getLastHoMessage();
-    const targetDate = trackedMessage?.targetDate ?? getLocalDateInTimeZone(new Date(), timezone).isoDate;
-    const hasExpired = stateStore.cleanupExpiredPlannedOutOfOffice(targetDate);
-    if (hasExpired) {
-      await stateStore.saveState();
-    }
-
-    const plannedEntries = stateStore.getPlannedOutOfOffice();
-    const blocks = buildPlannedOOOModal(body.user.id, plannedEntries);
+    const today = getLocalDateInTimeZone(new Date(), timezone).isoDate;
+    const entries = stateStore.getUpcomingPlannedOutOfOffice(today, body.user.id);
 
     const view: types.ModalView = {
       type: "modal",
@@ -449,7 +340,7 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
         type: "plain_text",
         text: "Planned Out of Office",
       },
-      blocks,
+      blocks: buildPlannedOOOBlocks(entries),
     };
     if (body.view) {
       await app.client.views.push({ trigger_id: body.trigger_id, view });
@@ -458,36 +349,24 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
     }
   });
 
-  registerVacationModal(app, stateStore, timezone, runtime.botUserId, (userId) => resolveUserProfile(app, userId), stateFilePath);
+  registerVacationModal(app, stateStore, timezone, runtime.botUserId, (userId) => resolveUserProfile(app, userId), vacationCachePrefix);
 }
 
-export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext): void {
+export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, timezone: string): void {
   logger.info("Registering planned OOO handlers");
 
-  app.action(/^remove_planned_/, async ({ ack, body }) => {
-    logger.info("Remove planned OOO button clicked", { action_id: (body as any).actions?.[0]?.action_id });
+  app.action<BlockAction<ButtonAction>>(/^remove_planned_/, async ({ ack, action, body }) => {
     await ack();
 
-    const actionId = (body as any).actions[0].action_id;
-    const id = actionId.replace(/^remove_planned_/, "");
-    
-    if (!id) {
-      logger.warn("Could not extract ID from action_id", { actionId });
-      return;
-    }
+    const id = action.action_id.replace(/^remove_planned_/, "");
+    if (!id || !body.view) return;
 
-    stateStore.removePlannedOutOfOffice(id);
-    await stateStore.saveState();
-
-    const trackedMessage = stateStore.getLastHoMessage();
-    stateStore.cleanupExpiredPlannedOutOfOffice(trackedMessage!.targetDate);
-
-    // Reopen the modal with updated list
-    const plannedEntries = stateStore.getPlannedOutOfOffice();
-    const blocks = buildPlannedOOOModal(body.user.id, plannedEntries);
+    const today = getLocalDateInTimeZone(new Date(), timezone).isoDate;
+    const removed = stateStore.removePlannedOutOfOffice(id, today, body.user.id);
+    const entries = stateStore.getUpcomingPlannedOutOfOffice(today, body.user.id);
 
     await app.client.views.update({
-      view_id: (body as any).view.id,
+      view_id: body.view.id,
       view: {
         type: "modal",
         callback_id: "planned_ooo_modal",
@@ -495,11 +374,11 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
           type: "plain_text",
           text: "Planned Out of Office",
         },
-        blocks,
+        blocks: buildPlannedOOOBlocks(entries),
       },
     });
 
-    // Sync the HO message to reflect changes
+    if (!removed) return;
     try {
       await syncTrackedHoMessage(app, stateStore, runtime);
     } catch (error) {
@@ -595,13 +474,13 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
     logger.info("Form submitted", { values });
 
     const userId = body.user.id;
-    const type = values.planned_type.type_select.selected_option?.value as "ho" | "vacation";
+    const type = values.planned_type.type_select.selected_option?.value;
     const startDate = values.planned_start_date.start_date_picker.selected_date;
     const endDate = values.planned_end_date?.end_date_picker?.selected_date;
 
     logger.info("Extracted values", { userId, type, startDate, endDate });
 
-    if (!userId || !type || !startDate) {
+    if (!userId || (type !== "ho" && type !== "vacation") || !startDate) {
       logger.warn("Form validation failed", { userId, type, startDate });
       await ack({
         response_action: "errors",
@@ -612,9 +491,20 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
       return;
     }
 
-    // Check for overlapping planned out of office entries
-    const plannedEntries = stateStore.getPlannedOutOfOffice();
-    const overlappingEntry = findOverlappingPlannedOOO(userId, startDate as string, endDate ?? undefined, plannedEntries);
+    if (endDate && endDate < startDate) {
+      await ack({ response_action: "errors", errors: { planned_end_date: "End date must be on or after the start date." } });
+      return;
+    }
+
+    const entry: PlannedOutOfOffice = { id: randomUUID(), userId, type, startDate, endDate: endDate ?? undefined };
+    let overlappingEntry: PlannedOutOfOffice | undefined;
+    try {
+      overlappingEntry = stateStore.tryAddPlannedOutOfOffice(entry);
+    } catch (error) {
+      logger.error("Failed to save planned OOO", error);
+      await ack({ response_action: "errors", errors: { planned_start_date: "Could not save the entry. Please try again." } });
+      return;
+    }
 
     if (overlappingEntry) {
       const existingRange = formatDateRange(overlappingEntry.startDate, overlappingEntry.endDate);
@@ -631,27 +521,6 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
 
     await ack();
 
-    const entry: PlannedOutOfOffice = {
-      id: randomUUID(),
-      userId,
-      type,
-      startDate: startDate as string,
-      endDate: endDate ?? undefined,
-    };
-
-    logger.info("Creating planned entry", { entry });
-    stateStore.addPlannedOutOfOffice(entry);
-
-    // If the planned entry starts today, remove the user from today's votes
-    const trackedMessage = stateStore.getLastHoMessage();
-    if (trackedMessage && isDateInRange(trackedMessage.targetDate, entry.startDate, entry.endDate)) {
-      stateStore.removeConfirmedOnsiteUser(userId);
-      stateStore.removeHoUser(userId);
-      stateStore.removeVacationUser(userId);
-    }
-
-    await stateStore.saveState();
-
     // Sync the HO message to reflect changes
     try {
       await syncTrackedHoMessage(app, stateStore, runtime);
@@ -663,8 +532,8 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
     const previousViewId = (body as any).view.previous_view_id;
     if (previousViewId) {
       try {
-        const plannedEntries = stateStore.getPlannedOutOfOffice();
-        const blocks = buildPlannedOOOModal(body.user.id, plannedEntries);
+        const today = getLocalDateInTimeZone(new Date(), timezone).isoDate;
+        const entries = stateStore.getUpcomingPlannedOutOfOffice(today, userId);
 
         await app.client.views.update({
           view_id: previousViewId,
@@ -675,7 +544,7 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
               type: "plain_text",
               text: "Planned Out of Office",
             },
-            blocks,
+            blocks: buildPlannedOOOBlocks(entries),
           },
         });
       } catch (error) {
@@ -685,7 +554,7 @@ export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, run
   });
 }
 
-export function registerAdminHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, adminUserIds: string[] = []): void {
+export function registerAdminHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, timezone: string, adminUserIds: string[] = []): void {
   logger.info("Registering admin handlers");
 
   // Command to manage user status
@@ -760,8 +629,7 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
 
     await ack();
 
-    stateStore.setTeamMembers(selectedUsers);
-    await stateStore.saveState();
+    stateStore.setTeamMembers(selectedUsers, getLocalDateInTimeZone(new Date(), timezone).isoDate);
 
     try {
       await syncTrackedHoMessage(app, stateStore, runtime);
@@ -902,32 +770,18 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
 
     await ack();
 
-    const trackedMessage = stateStore.getLastHoMessage();
-    if (!trackedMessage) {
+    let status: AttendanceVote | null;
+    switch (action) {
+      case "set_onsite": status = "onsite"; break;
+      case "set_ho": status = "ho"; break;
+      case "set_vacation": status = "vacation"; break;
+      case "clear_status": status = null; break;
+      default: return;
+    }
+    if (!stateStore.setAttendanceVote(targetUserId, status)) {
       logger.warn("No tracked message when applying admin action");
       return;
     }
-
-    // Apply the action
-    if (action === "set_onsite") {
-      stateStore.removeHoUser(targetUserId);
-      stateStore.removeVacationUser(targetUserId);
-      stateStore.addConfirmedOnsiteUser(targetUserId);
-    } else if (action === "set_ho") {
-      stateStore.removeConfirmedOnsiteUser(targetUserId);
-      stateStore.removeVacationUser(targetUserId);
-      stateStore.addHoUser(targetUserId);
-    } else if (action === "set_vacation") {
-      stateStore.removeConfirmedOnsiteUser(targetUserId);
-      stateStore.removeHoUser(targetUserId);
-      stateStore.addVacationUser(targetUserId);
-    } else if (action === "clear_status") {
-      stateStore.removeConfirmedOnsiteUser(targetUserId);
-      stateStore.removeHoUser(targetUserId);
-      stateStore.removeVacationUser(targetUserId);
-    }
-
-    await stateStore.saveState();
 
     // Sync the HO message
     try {
@@ -950,78 +804,12 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
       return;
     }
 
-    const trackedMessage = stateStore.getLastHoMessage();
-    const hasExpired = stateStore.cleanupExpiredPlannedOutOfOffice(trackedMessage?.targetDate || new Date().toISOString().split("T")[0]);
-    if (hasExpired) {
-      await stateStore.saveState();
-    }
-
-    const plannedEntries = stateStore.getPlannedOutOfOffice();
-
-    // Build modal with all planned entries and option to add more
-    const blocks: any[] = [];
-
-    if (plannedEntries.length === 0) {
-      blocks.push({
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: "No planned out of office entries.",
-        },
-      });
-    } else {
-      for (const entry of plannedEntries) {
-        const name = await resolveUserDisplayName(app, entry.userId);
-        const typeLabel = entry.type === "ho" ? "🏠 Home Office" : "🏝️ Vacation";
-        const endDateText = entry.endDate ? ` → ${entry.endDate}` : "";
-
-        blocks.push({
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: `*${name}*\n${typeLabel}\n_${entry.startDate}${endDateText}_`,
-          },
-          accessory: {
-            type: "button",
-            text: {
-              type: "plain_text",
-              text: "Remove",
-            },
-            value: entry.id,
-            action_id: `admin_remove_planned_${entry.id}`,
-            style: "danger",
-          },
-        });
-      }
-    }
-
-    blocks.push({
-      type: "actions",
-      elements: [
-        {
-          type: "button",
-          text: {
-            type: "plain_text",
-            text: "+ Add Entry",
-          },
-          action_id: "admin_add_planned_entry",
-          value: "add_entry",
-        },
-      ],
-    });
-
     try {
+      const today = getLocalDateInTimeZone(new Date(), timezone).isoDate;
+      const entries = stateStore.getUpcomingPlannedOutOfOffice(today);
       await app.client.views.open({
         trigger_id: body.trigger_id,
-        view: {
-          type: "modal",
-          callback_id: "admin_ooo_modal",
-          title: {
-            type: "plain_text",
-            text: "Manage Time Off",
-          },
-          blocks,
-        },
+        view: await buildAdminPlannedOOOView(app, entries),
       });
     } catch (error) {
       logger.error("Failed to open admin OOO modal", error);
@@ -1032,8 +820,7 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
     }
   });
 
-  app.action(/^admin_remove_planned_/, async ({ ack, body }) => {
-    logger.info("Admin remove planned OOO button clicked", { action_id: (body as any).actions?.[0]?.action_id });
+  app.action<BlockAction<ButtonAction>>(/^admin_remove_planned_/, async ({ ack, action, body }) => {
     await ack();
 
     const userId = body.user.id;
@@ -1041,86 +828,18 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
       return;
     }
 
-    const actionId = (body as any).actions[0].action_id;
-    const id = actionId.replace(/^admin_remove_planned_/, "");
+    const id = action.action_id.replace(/^admin_remove_planned_/, "");
+    if (!id || !body.view) return;
 
-    if (!id) {
-      logger.warn("Could not extract ID from action_id", { actionId });
-      return;
-    }
-
-    stateStore.removePlannedOutOfOffice(id);
-    const trackedMessage = stateStore.getLastHoMessage();
-    stateStore.cleanupExpiredPlannedOutOfOffice(trackedMessage?.targetDate || new Date().toISOString().split("T")[0]);
-    await stateStore.saveState();
-
-    // Rebuild the modal
-    const plannedEntries = stateStore.getPlannedOutOfOffice();
-    const blocks: any[] = [];
-
-    if (plannedEntries.length === 0) {
-      blocks.push({
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: "No planned out of office entries.",
-        },
-      });
-    } else {
-      for (const entry of plannedEntries) {
-        const name = await resolveUserDisplayName(app, entry.userId);
-        const typeLabel = entry.type === "ho" ? "🏠 Home Office" : "🏝️ Vacation";
-        const endDateText = entry.endDate ? ` → ${entry.endDate}` : "";
-
-        blocks.push({
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: `*${name}*\n${typeLabel}\n_${entry.startDate}${endDateText}_`,
-          },
-          accessory: {
-            type: "button",
-            text: {
-              type: "plain_text",
-              text: "Remove",
-            },
-            value: entry.id,
-            action_id: `admin_remove_planned_${entry.id}`,
-            style: "danger",
-          },
-        });
-      }
-    }
-
-    blocks.push({
-      type: "actions",
-      elements: [
-        {
-          type: "button",
-          text: {
-            type: "plain_text",
-            text: "+ Add Entry",
-          },
-          action_id: "admin_add_planned_entry",
-          value: "add_entry",
-        },
-      ],
-    });
-
+    const today = getLocalDateInTimeZone(new Date(), timezone).isoDate;
+    const removed = stateStore.removePlannedOutOfOffice(id, today);
+    const entries = stateStore.getUpcomingPlannedOutOfOffice(today);
     await app.client.views.update({
-      view_id: (body as any).view.id,
-      view: {
-        type: "modal",
-        callback_id: "admin_ooo_modal",
-        title: {
-          type: "plain_text",
-          text: "Manage Time Off",
-        },
-        blocks,
-      },
+      view_id: body.view.id,
+      view: await buildAdminPlannedOOOView(app, entries),
     });
 
-    // Sync the HO message
+    if (!removed) return;
     try {
       await syncTrackedHoMessage(app, stateStore, runtime);
     } catch (error) {
@@ -1252,11 +971,11 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
     logger.info("Admin add planned form submitted", { values });
 
     const targetUserId = values.admin_ooo_user.user_select.selected_option?.value;
-    const type = values.admin_ooo_type.type_select.selected_option?.value as "ho" | "vacation";
+    const type = values.admin_ooo_type.type_select.selected_option?.value;
     const startDate = values.admin_ooo_start_date.start_date_picker.selected_date;
     const endDate = values.admin_ooo_end_date?.end_date_picker?.selected_date;
 
-    if (!targetUserId || !type || !startDate) {
+    if (!targetUserId || (type !== "ho" && type !== "vacation") || !startDate) {
       await ack({
         response_action: "errors",
         errors: {
@@ -1266,9 +985,20 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
       return;
     }
 
-    // Check for overlapping entries
-    const plannedEntries = stateStore.getPlannedOutOfOffice();
-    const overlappingEntry = findOverlappingPlannedOOO(targetUserId, startDate as string, endDate ?? undefined, plannedEntries);
+    if (endDate && endDate < startDate) {
+      await ack({ response_action: "errors", errors: { admin_ooo_end_date: "End date must be on or after the start date." } });
+      return;
+    }
+
+    const entry: PlannedOutOfOffice = { id: randomUUID(), userId: targetUserId, type, startDate, endDate: endDate ?? undefined };
+    let overlappingEntry: PlannedOutOfOffice | undefined;
+    try {
+      overlappingEntry = stateStore.tryAddPlannedOutOfOffice(entry);
+    } catch (error) {
+      logger.error("Failed to save admin planned OOO", error);
+      await ack({ response_action: "errors", errors: { admin_ooo_start_date: "Could not save the entry. Please try again." } });
+      return;
+    }
 
     if (overlappingEntry) {
       const existingRange = formatDateRange(overlappingEntry.startDate, overlappingEntry.endDate);
@@ -1284,27 +1014,6 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
 
     await ack();
 
-    const entry: PlannedOutOfOffice = {
-      id: randomUUID(),
-      userId: targetUserId,
-      type,
-      startDate: startDate as string,
-      endDate: endDate ?? undefined,
-    };
-
-    logger.info("Admin creating planned entry", { entry });
-    stateStore.addPlannedOutOfOffice(entry);
-
-    // If the planned entry starts today, remove the user from today's votes
-    const trackedMessage = stateStore.getLastHoMessage();
-    if (trackedMessage && isDateInRange(trackedMessage.targetDate, entry.startDate, entry.endDate)) {
-      stateStore.removeConfirmedOnsiteUser(targetUserId);
-      stateStore.removeHoUser(targetUserId);
-      stateStore.removeVacationUser(targetUserId);
-    }
-
-    await stateStore.saveState();
-
     // Sync the HO message
     try {
       await syncTrackedHoMessage(app, stateStore, runtime);
@@ -1316,69 +1025,11 @@ export function registerAdminHandlers(app: App, stateStore: StateStore, runtime:
     const previousViewId = (body as any).view.previous_view_id;
     if (previousViewId) {
       try {
-        const updatedEntries = stateStore.getPlannedOutOfOffice();
-        const blocks: any[] = [];
-
-        if (updatedEntries.length === 0) {
-          blocks.push({
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: "No planned out of office entries.",
-            },
-          });
-        } else {
-          for (const entry of updatedEntries) {
-            const name = await resolveUserDisplayName(app, entry.userId);
-            const typeLabel = entry.type === "ho" ? "🏠 Home Office" : "🏝️ Vacation";
-            const endDateText = entry.endDate ? ` → ${entry.endDate}` : "";
-
-            blocks.push({
-              type: "section",
-              text: {
-                type: "mrkdwn",
-                text: `*${name}*\n${typeLabel}\n_${entry.startDate}${endDateText}_`,
-              },
-              accessory: {
-                type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "Remove",
-                },
-                value: entry.id,
-                action_id: `admin_remove_planned_${entry.id}`,
-                style: "danger",
-              },
-            });
-          }
-        }
-
-        blocks.push({
-          type: "actions",
-          elements: [
-            {
-              type: "button",
-              text: {
-                type: "plain_text",
-                text: "+ Add Entry",
-              },
-              action_id: "admin_add_planned_entry",
-              value: "add_entry",
-            },
-          ],
-        });
-
+        const today = getLocalDateInTimeZone(new Date(), timezone).isoDate;
+        const entries = stateStore.getUpcomingPlannedOutOfOffice(today);
         await app.client.views.update({
           view_id: previousViewId,
-          view: {
-            type: "modal",
-            callback_id: "admin_ooo_modal",
-            title: {
-              type: "plain_text",
-              text: "Manage Time Off",
-            },
-            blocks,
-          },
+          view: await buildAdminPlannedOOOView(app, entries),
         });
       } catch (error) {
         logger.error("Failed to update parent modal after admin adding planned OOO", error);

@@ -1,9 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { App, types } from "@slack/bolt";
+import { loadConfig } from "../src/config";
 import { getLocalDateInTimeZone } from "../src/date";
+import { registerAdminHandlers, registerButtonHandlers, registerPlannedOOOHandlers } from "../src/slack";
+import { StateStore } from "../src/state";
 import { PlannedOutOfOffice } from "../src/types";
 import { registerVacationModal } from "../src/vacationModal";
+import { shiftVacationMonth } from "../src/vacationMonth";
 
 const timezone = "Europe/Prague";
 const privateUrl = "https://files.slack.com/files-pri/T1-F1/vacation-timeline.png";
@@ -24,8 +31,21 @@ function slackError(error: string, messages?: string[]) {
   return Object.assign(new Error(error), { data: { error, response_metadata: { messages } } });
 }
 
-function testSlack(entries: PlannedOutOfOffice[], options: { rejectUpload?: boolean; rejectImage?: boolean; delayFileMetadata?: boolean } = {}) {
+interface CommandRequest {
+  ack: () => Promise<void>;
+  body: { user_id: string; trigger_id: string };
+  respond: (message: unknown) => Promise<void>;
+}
+
+function testSlack(entries: PlannedOutOfOffice[], options: {
+  rejectUpload?: boolean;
+  rejectImage?: boolean;
+  delayFileMetadata?: boolean;
+  stateStore?: StateStore;
+  vacationCachePrefix?: string;
+} = {}) {
   const handlers = new Map<RegExp | string, (request: ActionRequest) => Promise<void>>();
+  const commands = new Map<string, (request: CommandRequest) => Promise<void>>();
   const events: string[] = [];
   let currentHash = "hash0";
   let revision = 0;
@@ -34,7 +54,10 @@ function testSlack(entries: PlannedOutOfOffice[], options: { rejectUpload?: bool
   const updates: ViewRequest[] = [];
   const app = {
     action: (id: RegExp | string, handler: (request: ActionRequest) => Promise<void>) => handlers.set(id, handler),
+    command: (id: string, handler: (request: CommandRequest) => Promise<void>) => commands.set(id, handler),
+    view: () => undefined,
     client: {
+      users: { info: async () => ({ user: { profile: { real_name: "Jana" } } }) },
       files: {
         getUploadURLExternal: async () => {
           events.push("allocate");
@@ -52,13 +75,15 @@ function testSlack(entries: PlannedOutOfOffice[], options: { rejectUpload?: bool
         open: async ({ view }: ViewRequest) => {
           events.push("open");
           opened.push(view);
-          assert.ok(JSON.stringify(view).includes("Loading planned vacations"));
+          if (view.callback_id === "show_all_modal") {
+            assert.ok(JSON.stringify(view).includes("Loading planned vacations"));
+          }
           return { view: { id: "V1", hash: currentHash } };
         },
         update: async (request: ViewRequest) => {
           events.push("update");
           assert.equal(request.view_id, "V1");
-          if (request.hash !== currentHash) throw slackError("hash_conflict");
+          if (request.hash !== undefined && request.hash !== currentHash) throw slackError("hash_conflict");
           updates.push(request);
           const image = request.view.blocks.find((block) => block.type === "image");
           if (options.rejectImage && image) throw slackError("invalid_arguments");
@@ -72,7 +97,15 @@ function testSlack(entries: PlannedOutOfOffice[], options: { rejectUpload?: bool
       },
     },
   };
-  registerVacationModal(app as unknown as App, { getPlannedOutOfOffice: () => entries }, timezone, "B1", async () => ({ name: "Jana" }));
+  const slack = app as unknown as App;
+  if (options.stateStore) {
+    const runtime = { botUserId: "B1" };
+    registerButtonHandlers(slack, options.stateStore, runtime, timezone, options.vacationCachePrefix);
+    registerPlannedOOOHandlers(slack, options.stateStore, runtime, timezone);
+    registerAdminHandlers(slack, options.stateStore, runtime, timezone, ["U1"]);
+  } else {
+    registerVacationModal(slack, { getVacationsInRange: () => entries }, timezone, "B1", async () => ({ name: "Jana" }));
+  }
 
   async function click(actionId: string, view?: ActionRequest["body"]["view"]) {
     const match = [...handlers].find(([id]) => typeof id === "string" ? id === actionId : id.test(actionId));
@@ -91,7 +124,16 @@ function testSlack(entries: PlannedOutOfOffice[], options: { rejectUpload?: bool
       private_metadata: JSON.stringify({ month, onsite: [], workspace: "T1" }),
     };
   }
-  return { click, sourceView, events, opened, updates };
+  async function command(id: string) {
+    const handler = commands.get(id);
+    assert.ok(handler);
+    await handler({
+      ack: async () => { events.push("ack"); },
+      body: { user_id: "U1", trigger_id: "trigger" },
+      respond: async () => assert.fail("Expected the command to open a modal"),
+    });
+  }
+  return { click, command, sourceView, events, opened, updates };
 }
 
 function todayVacation(): PlannedOutOfOffice {
@@ -170,5 +212,73 @@ test("upload and image modal update failures leave a usable date list and naviga
     assert.ok(text.includes(`Jana · ${entry.startDate}`));
     assert.ok(text.includes("vacation_month_today"));
     assert.equal(slack.updates.length, options.rejectImage ? 2 : 1);
+  }
+});
+
+test("completed vacations leave management views and stay in the historical Slack timeline", async (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "homeofficebot-slack-state-"));
+  const store = StateStore.open(path.join(directory, "state.sqlite"));
+  t.after(() => {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const today = todayVacation();
+  const month = today.startDate.slice(0, 7);
+  const previousMonth = shiftVacationMonth(month, -1);
+  const pastDate = `${previousMonth}-03`;
+  store.tryAddPlannedOutOfOffice({ ...today, id: "historical", startDate: pastDate, endDate: pastDate });
+  store.tryAddPlannedOutOfOffice(today);
+  store.setLastHoMessage({ channelId: "C1", messageTs: "1.2", targetDate: `${shiftVacationMonth(month, 1)}-01`, postedAt: "now" });
+  const slack = testSlack([], { stateStore: store });
+
+  await slack.click("planned_ooo_button");
+  await slack.command("/hovnobot-ooo");
+  assert.equal(slack.opened.length, 2);
+  for (const view of slack.opened) {
+    const text = JSON.stringify(view.blocks);
+    assert.ok(text.includes(today.startDate));
+    assert.ok(!text.includes(pastDate));
+  }
+
+  await slack.click("remove_planned_historical", slack.sourceView(month));
+  await slack.click("admin_remove_planned_historical", slack.sourceView(month));
+  await slack.click("vacation_month_previous", slack.sourceView(month));
+  assert.ok(JSON.stringify(slack.updates.at(-1)?.view.blocks).includes(`Jana · ${pastDate}`));
+});
+
+test("the timeline image uses the database directory when stateFilePath is omitted", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "homeofficebot-vacation-cache-"));
+  const configPath = path.join(directory, "config.yaml");
+  const originalDirectory = process.cwd();
+  try {
+    // Opening this path as a cache file would fail. The configured database is elsewhere.
+    mkdirSync(path.join(directory, "data", "state.json.B1.vacation-images.json"), { recursive: true });
+    writeFileSync(configPath, [
+      "slackBotToken: xoxb-test",
+      "slackAppToken: xapp-test",
+      "slackChannelId: C1",
+      "stateDatabasePath: storage/bot.sqlite",
+    ].join("\n"));
+    process.chdir(directory);
+    let config;
+    try {
+      config = loadConfig(configPath);
+    } finally {
+      process.chdir(originalDirectory);
+    }
+
+    const store = StateStore.open(config.stateDatabasePath, config.stateFilePath);
+    try {
+      store.tryAddPlannedOutOfOffice(todayVacation());
+      const slack = testSlack([], { stateStore: store, vacationCachePrefix: config.vacationCachePrefix });
+      await slack.click("show_all_in_office");
+      assert.ok(slack.updates.at(-1)?.view.blocks.some((block) => block.type === "image"));
+      const indexPath = path.join(directory, "storage", "bot.sqlite.B1.vacation-images.json");
+      assert.match(readFileSync(indexPath, "utf8"), /"fileId":"F1"/);
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

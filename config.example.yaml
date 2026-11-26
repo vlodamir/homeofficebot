@@ -23,9 +23,12 @@ postMinute: 0
 # defaults to "Europe/Prague"
 timezone: "Europe/Prague"
 
-# Path to state file for tracking posted messages
-# defaults to "data/state.json"
-stateFilePath: "data/state.json"
+# SQLite database path. Defaults to data/state.sqlite, or to the path derived from stateFilePath.
+# stateDatabasePath: "data/state.sqlite"
+
+# Legacy JSON import path. Defaults to data/state.json.
+# Keep the existing value when upgrading from a custom path.
+# stateFilePath: "data/state.json"
 
 # List of admin users (use Slack user IDs)
 # Admin users have special permissions:

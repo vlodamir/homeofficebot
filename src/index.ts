@@ -24,9 +24,7 @@ async function runStartupCatchUp(app: App, config: AppConfig, stateStore: StateS
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const stateStore = new StateStore(config.stateFilePath);
-
-  await stateStore.load();
+  const stateStore = StateStore.open(config.stateDatabasePath, config.stateFilePath);
 
   const app = createSlackApp(config);
   registerGlobalErrorHandler(app);
@@ -34,9 +32,9 @@ async function main(): Promise<void> {
   const botUserId = await resolveBotUserId(app);
   const runtime = { botUserId };
 
-  registerButtonHandlers(app, stateStore, runtime, config.timezone, config.stateFilePath);
-  registerPlannedOOOHandlers(app, stateStore, runtime);
-  registerAdminHandlers(app, stateStore, runtime, config.adminUsers);
+  registerButtonHandlers(app, stateStore, runtime, config.timezone, config.vacationCachePrefix);
+  registerPlannedOOOHandlers(app, stateStore, runtime, config.timezone);
+  registerAdminHandlers(app, stateStore, runtime, config.timezone, config.adminUsers);
 
   await app.start();
   startScheduler(app, config, stateStore, runtime);
@@ -45,7 +43,7 @@ async function main(): Promise<void> {
   logger.info("Slack HO bot is running", {
     channelId: config.slackChannelId,
     timezone: config.timezone,
-    stateFilePath: config.stateFilePath,
+    stateDatabasePath: config.stateDatabasePath,
     botUserId,
   });
 }

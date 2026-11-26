@@ -54,8 +54,7 @@ function validateRange(field: string, value: number, min: number, max: number): 
   return value;
 }
 
-export function loadConfig(): AppConfig {
-  const configPath = getConfigFilePath();
+export function loadConfig(configPath = getConfigFilePath()): AppConfig {
   const absoluteConfigPath = path.isAbsolute(configPath)
     ? configPath
     : path.resolve(process.cwd(), configPath);
@@ -88,6 +87,16 @@ export function loadConfig(): AppConfig {
     process.cwd(),
     (config.stateFilePath as string) || "data/state.json"
   );
+  const defaultDatabasePath = `${stateFilePath.replace(/\.json$/i, "")}.sqlite`;
+  const stateDatabasePath = config.stateDatabasePath === undefined
+    ? defaultDatabasePath
+    : path.resolve(process.cwd(), requireField(config, "stateDatabasePath"));
+  if (stateDatabasePath === stateFilePath) {
+    throw new Error("stateDatabasePath must differ from the legacy stateFilePath");
+  }
+  const vacationCachePrefix = path.dirname(stateFilePath) === path.dirname(stateDatabasePath)
+    ? stateFilePath
+    : stateDatabasePath;
   const adminUsers = (config.adminUsers as string[]) || [];
   const teamMembers = (config.teamMembers as string[]) || [];
 
@@ -99,6 +108,8 @@ export function loadConfig(): AppConfig {
     postHour,
     postMinute,
     stateFilePath,
+    stateDatabasePath,
+    vacationCachePrefix,
     adminUsers,
     teamMembers,
   };

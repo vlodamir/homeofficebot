@@ -2,7 +2,7 @@ import type { App, BlockAction, ButtonAction, types } from "@slack/bolt";
 import { setTimeout as delay } from "node:timers/promises";
 import { getLocalDateInTimeZone } from "./date";
 import { logger } from "./logger";
-import { StateStore } from "./state";
+import type { StateStore } from "./state";
 import { VacationAvatarCache } from "./vacationAvatars";
 import { buildVacationMonth, shiftVacationMonth, VacationMonth } from "./vacationMonth";
 import { isSlackFileReferenceRejected, slackErrorCode, slackVacationImageFiles, VacationImageCache, vacationImageKey, VacationSlackImage } from "./vacationImages";
@@ -135,19 +135,22 @@ function isStaleView(error: unknown): boolean {
 
 export function registerVacationModal(
   app: App,
-  stateStore: Pick<StateStore, "getPlannedOutOfOffice">,
+  stateStore: Pick<StateStore, "getVacationsInRange">,
   timezone: string,
   botUserId: string,
   getProfile: (userId: string) => Promise<VacationProfile>,
-  stateFilePath?: string,
+  vacationCachePrefix?: string,
 ): void {
-  const cachePrefix = stateFilePath && `${stateFilePath}.${botUserId}`;
+  const cachePrefix = vacationCachePrefix && `${vacationCachePrefix}.${botUserId}`;
   const files = slackVacationImageFiles(app.client.files);
   const cache = new VacationImageCache(files, cachePrefix && `${cachePrefix}.vacation-images.json`);
   const avatars = new VacationAvatarCache(cachePrefix && `${cachePrefix}.vacation-avatars`);
 
   async function showMonth(viewId: string, hash: string, metadata: VacationViewMetadata, today: string) {
-    const month = buildVacationMonth(metadata.month, today, stateStore.getPlannedOutOfOffice());
+    const start = `${metadata.month}-01`;
+    const end = `${shiftVacationMonth(metadata.month, 1)}-01`;
+    const entries = stateStore.getVacationsInRange(start, end);
+    const month = buildVacationMonth(metadata.month, today, entries);
     const profiles = new Map(await Promise.all(month.employees.map(async ({ userId }) =>
       [userId, await getProfile(userId)] as const,
     )));

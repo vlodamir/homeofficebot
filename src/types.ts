@@ -6,6 +6,8 @@ export interface AppConfig {
   postHour: number;
   postMinute: number;
   stateFilePath: string;
+  stateDatabasePath: string;
+  vacationCachePrefix: string;
   adminUsers: string[];
   teamMembers?: string[];
 }
@@ -26,12 +28,6 @@ export interface HOMessageState {
   confirmedOnsiteUsers?: string[];
   hoUsers?: string[];
   vacationUsers?: string[];
-}
-
-export interface StoredState {
-  lastHoMessage: HOMessageState | null;
-  plannedOutOfOffice: PlannedOutOfOffice[];
-  teamMembers: string[];
 }
 
 export interface LocalDateParts {

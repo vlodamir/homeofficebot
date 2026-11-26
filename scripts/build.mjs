@@ -18,7 +18,7 @@ await build({
   outfile,
   bundle: true,
   platform: "node",
-  target: "node18",
+  target: "node22",
   loader: { ".wasm": "binary", ".ttf": "binary" },
   banner: { js: `/*! DejaVu Sans\n${license.replaceAll("*/", "* /")}\n*/` },
   logLevel: "info",

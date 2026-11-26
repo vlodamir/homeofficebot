@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "engines": {
-    "node": ">=18.18.0"
+    "node": ">=22.13.0"
   },
   "dependencies": {
     "@resvg/resvg-wasm": "^2.6.2",

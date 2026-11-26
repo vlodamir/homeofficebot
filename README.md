@@ -17,9 +17,11 @@ Slack bot v TypeScriptu pro denní HO hlasování. Každý pracovní den v 18:00
 - Když někdo klikne na ✅, bot odebere svůj hlas a přidá jméno uživatele pod zprávu
 - Když někdo hlas odebere, jméno zmizí; pokud nikdo nehlasuje, bot vrátí ✅ zpět
 - Víkendy přeskočí
-- Stav poslední zprávy ukládá do `data/state.json` – přežije restart
+- Stav poslední zprávy, členy týmu a plánované absence ukládá do `data/state.sqlite`.
 
 ## Instalace
+
+Použij Node.js 22.13.0 nebo novější. Soubor `.nvmrc` vybírá Node.js 22.
 
 ```bash
 npm install
@@ -53,7 +55,7 @@ slackChannelId: "C0XXXXXXX"
 postHour: 18
 postMinute: 0
 timezone: "Europe/Prague"
-stateFilePath: "data/state.json"
+stateDatabasePath: "data/state.sqlite"
 ```
 
 Team members are no longer configured in YAML. Use the Slack admin slash command `/hovnobot-team-members` to add or remove tracked users.
@@ -66,9 +68,10 @@ Team members are no longer configured in YAML. Use the Slack admin slash command
 | `timezone` | Časová zóna (IANA format) | `Europe/Prague` |
 | `postHour` | Hodina odeslání (0–23) | `18` |
 | `postMinute` | Minuta odeslání (0–59) | `0` |
-| `stateFilePath` | Cesta k souboru stavu | `data/state.json` |
+| `stateDatabasePath` | Cesta k databázi SQLite | `data/state.sqlite` nebo cesta odvozená z `stateFilePath` |
+| `stateFilePath` | Cesta k původnímu JSON pro import | `data/state.json` |
 
-Team members are now stored in the state file (`data/state.json`) and managed with the new slash command `/hovnobot-team-members`.
+Paths are relative to the bot's working directory. When `stateDatabasePath` is omitted, the bot replaces the `.json` suffix of `stateFilePath` with `.sqlite`, or appends `.sqlite` to paths with other suffixes.
 
 ## Nastavení Slack app
 
@@ -103,15 +106,17 @@ Team members are now stored in the state file (`data/state.json`) and managed wi
 
 ## Planned vacation timeline
 
-**Show all** displays the onsite roster while it loads the vacation timeline below. The timeline starts at the current month in the bot's configured timezone and includes month navigation and exact vacation dates. Use **Planned Absences** in the daily message to manage entries. Past months reflect the records still present in the existing state store.
+**Show all** displays the onsite roster while it loads the vacation timeline below. The timeline starts at the current month in the bot's configured timezone and includes month navigation and exact vacation dates. Use **Planned Absences** in the daily message to manage ongoing and upcoming entries. Completed vacations stay available in their historical months, including vacations of former team members.
 
 Add `files:write` and `files:read` to the existing app's bot scopes, then reinstall or reauthorize it in the workspace before restarting the bot. The bot completes uploads without a channel destination and uses the authenticated Slack file URL in the modal when available. The date list remains available if a timeline image can't be displayed. [Slack file uploads](https://docs.slack.dev/reference/methods/files.completeUploadExternal/) · [Block Kit Slack file reference](https://docs.slack.dev/reference/block-kit/composition-objects/slack-file-object/)
 
-Run `npm ci` and `npm run build` on the build machine, then copy `dist/index.js` to the server. The bundle includes the JavaScript dependencies, WebAssembly renderer, and chart fonts. The server needs Node.js 18.18 or later and the bot's existing configuration and writable state path. Start it with `node index.js --config /path/to/config.yaml`.
+The bot keeps the image index and avatar cache beside the SQLite database. It reuses the original cache names when the legacy JSON path is in the same directory. The image cache keeps up to 24 private Slack images and cleans up expired images when used. The avatar cache keeps up to 128 avatars for up to seven days and refreshes an avatar when its URL changes.
 
-The bot uses the existing YAML configuration. It writes a small image cache index beside `stateFilePath` and keeps up to 24 private images per cache. Expired images are cleaned up when the cache is used. Keep the cache index on the same persistent volume as the bot state across restarts.
+## Deploying and upgrading storage
 
-The bot also caches up to 128 Slack avatars on disk beside `stateFilePath`. New charts reuse cached avatars for up to seven days. A changed Slack avatar URL triggers a fresh download.
+Run `npm ci` and `npm run build` on the build machine, then copy `dist/index.js` to the server. Check that the bot service uses Node.js 22.13.0 or later and has write access to the database directory on persistent storage. Start it with `node index.js --config /path/to/config.yaml`.
+
+For an upgrade from JSON, stop the old process and back up the file at `stateFilePath` before starting the new bundle. The first startup imports the snapshot into SQLite and keeps the original JSON available as a backup. Future writes go to SQLite. Entries already deleted by the old bot can only be recovered from an older backup. If import fails, correct the reported source error and restart to retry the import.
 
 ## Struktura projektu
 

@@ -4,6 +4,10 @@ dist-test/
 .env
 config.yaml
 data/*.json
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
 *.vacation-avatars/
 !data/.gitkeep
 npm-debug.log*

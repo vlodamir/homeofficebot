@@ -6,23 +6,22 @@ import { StateStore } from "./state";
 
 async function sendNow(): Promise<void> {
   const config = loadConfig();
-  const stateStore = new StateStore(config.stateFilePath);
+  const stateStore = StateStore.open(config.stateDatabasePath, config.stateFilePath);
+  try {
+    const app = createSlackApp(config);
+    await app.start();
 
-  await stateStore.load();
+    const targetDate = getNextWorkdayInTimeZone(new Date(), config.timezone).isoDate;
+    logger.info("Sending HO message now (manual trigger)", { targetDate });
 
-  const app = createSlackApp(config);
-  await app.start();
+    const trackedMessage = await postHoMessage(app, config.slackChannelId, targetDate, stateStore.getTeamMembers(), stateStore);
+    stateStore.setLastHoMessage(trackedMessage);
 
-  const targetDate = getNextWorkdayInTimeZone(new Date(), config.timezone).isoDate;
-
-  logger.info("Sending HO message now (manual trigger)", { targetDate });
-
-  const trackedMessage = await postHoMessage(app, config.slackChannelId, targetDate, stateStore.getTeamMembers(), stateStore);
-  await stateStore.setLastHoMessage(trackedMessage);
-
-  logger.info("Done", { messageTs: trackedMessage.messageTs });
-
-  await app.stop();
+    logger.info("Done", { messageTs: trackedMessage.messageTs });
+    await app.stop();
+  } finally {
+    stateStore.close();
+  }
   process.exit(0);
 }
 
