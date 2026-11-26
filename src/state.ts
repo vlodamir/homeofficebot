@@ -1,7 +1,6 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { readLegacyState } from "./legacyState";
 import { logger } from "./logger";
 import type { HOMessageState, PlannedOutOfOffice } from "./types";
 
@@ -58,12 +57,12 @@ function toPlannedEntry(row: AbsenceRow): PlannedOutOfOffice {
 export class StateStore {
   private constructor(private readonly db: DatabaseSync) {}
 
-  static open(databasePath: string, legacyPath?: string): StateStore {
+  static open(databasePath: string): StateStore {
     mkdirSync(path.dirname(databasePath), { recursive: true });
     const stateStore = new StateStore(new DatabaseSync(databasePath, { enableForeignKeyConstraints: true }));
     try {
       stateStore.db.exec("PRAGMA busy_timeout = 1000");
-      stateStore.initialize(legacyPath);
+      stateStore.initialize();
       return stateStore;
     } catch (error) {
       stateStore.close();
@@ -75,30 +74,15 @@ export class StateStore {
     this.db.close();
   }
 
-  private initialize(legacyPath?: string): void {
-    const imported = this.transaction(() => {
+  private initialize(): void {
+    this.transaction(() => {
       const version = this.db.prepare("PRAGMA user_version").get()?.user_version;
-      if (version === schemaVersion) return undefined;
+      if (version === schemaVersion) return;
       if (version !== 0) throw new Error(`Unsupported state database schema version: ${version}`);
 
-      const legacy = legacyPath ? readLegacyState(legacyPath) : undefined;
       this.db.exec(schema);
-      if (legacy) {
-        this.writeLastHoMessage(legacy.lastHoMessage);
-        this.insertTeamMembers(legacy.teamMembers);
-        for (const entry of legacy.plannedOutOfOffice) {
-          this.insertAbsence(entry);
-        }
-      }
       this.db.exec(`PRAGMA user_version = ${schemaVersion}`);
-      return legacy && {
-        plannedAbsences: legacy.plannedOutOfOffice.length,
-        teamMembers: legacy.teamMembers.length,
-        hasLastHoMessage: legacy.lastHoMessage !== null,
-      };
     });
-
-    if (imported) logger.info("Imported legacy state into SQLite", { legacyPath, ...imported });
   }
 
   private transaction<T>(write: () => T): T {

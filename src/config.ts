@@ -83,20 +83,9 @@ export function loadConfig(configPath = getConfigFilePath()): AppConfig {
     59
   );
   const timezone = (config.timezone as string) || "Europe/Prague";
-  const stateFilePath = path.resolve(
-    process.cwd(),
-    (config.stateFilePath as string) || "data/state.json"
-  );
-  const defaultDatabasePath = `${stateFilePath.replace(/\.json$/i, "")}.sqlite`;
-  const stateDatabasePath = config.stateDatabasePath === undefined
-    ? defaultDatabasePath
-    : path.resolve(process.cwd(), requireField(config, "stateDatabasePath"));
-  if (stateDatabasePath === stateFilePath) {
-    throw new Error("stateDatabasePath must differ from the legacy stateFilePath");
-  }
-  const vacationCachePrefix = path.dirname(stateFilePath) === path.dirname(stateDatabasePath)
-    ? stateFilePath
-    : stateDatabasePath;
+  const stateDatabasePath = path.resolve(config.stateDatabasePath === undefined
+    ? "data/state.sqlite"
+    : requireField(config, "stateDatabasePath"));
   const adminUsers = (config.adminUsers as string[]) || [];
   const teamMembers = (config.teamMembers as string[]) || [];
 
@@ -107,9 +96,7 @@ export function loadConfig(configPath = getConfigFilePath()): AppConfig {
     timezone,
     postHour,
     postMinute,
-    stateFilePath,
     stateDatabasePath,
-    vacationCachePrefix,
     adminUsers,
     teamMembers,
   };

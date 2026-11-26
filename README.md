@@ -1,10 +1,10 @@
 # homeofficebot
 
-Slack bot v TypeScriptu pro denní HO hlasování. Každý pracovní den v 18:00 pošle zprávu do zvoleného kanálu, přidá hlasovací reakci ✅ a aktualizuje seznam lidí kteří budou mít HO.
+Bot pro Slack napsaný v TypeScriptu slouží k dennímu hlasování o práci z domova (HO). Každý pracovní den v 18:00 pošle zprávu do zvoleného kanálu, přidá hlasovací reakci ✅ a aktualizuje seznam lidí, kteří budou pracovat z domova.
 
 ## Co bot dělá
 
-- Každý pracovní den v 18:00 pošle do kanálu zprávu ve formátu:
+- Každý pracovní den v 18:00 pošle do kanálu zprávu v tomto formátu.
 
 ```
 🏠 *HO Úterý*
@@ -15,7 +15,7 @@ Slack bot v TypeScriptu pro denní HO hlasování. Každý pracovní den v 18:00
 
 - Přidá reakci ✅ jako hlasovací tlačítko
 - Když někdo klikne na ✅, bot odebere svůj hlas a přidá jméno uživatele pod zprávu
-- Když někdo hlas odebere, jméno zmizí; pokud nikdo nehlasuje, bot vrátí ✅ zpět
+- Když někdo odebere svůj hlas, jeho jméno zmizí. Pokud nikdo nehlasuje, bot znovu přidá ✅
 - Víkendy přeskočí
 - Stav poslední zprávy, členy týmu a plánované absence ukládá do `data/state.sqlite`.
 
@@ -36,7 +36,7 @@ Otevři `config.yaml` a vyplň hodnoty (viz sekce níže).
 npm run dev
 ```
 
-Ruční odeslání zprávy okamžitě (pro testování):
+Pro okamžité odeslání zkušební zprávy použij tento příkaz.
 
 ```bash
 npm run send-now
@@ -44,9 +44,9 @@ npm run send-now
 
 ## Konfigurace (config.yaml)
 
-Aplikace se konfiguruje přes YAML soubor, který se předá jako command-line argument `--config`.
+Aplikace načítá nastavení ze souboru YAML, jehož cestu zadáš pomocí volby `--config`.
 
-Příklad `config.yaml`:
+Ukázka souboru `config.yaml`.
 
 ```yaml
 slackBotToken: "xoxb-..."
@@ -58,65 +58,67 @@ timezone: "Europe/Prague"
 stateDatabasePath: "data/state.sqlite"
 ```
 
-Team members are no longer configured in YAML. Use the Slack admin slash command `/hovnobot-team-members` to add or remove tracked users.
+Členy sledovaného týmu mohou správci přidávat a odebírat příkazem `/hovnobot-team-members` ve Slacku.
 
 | Položka | Popis | Výchozí |
 |---|---|---|
-| `slackBotToken` | Bot User OAuth Token (`xoxb-...`) | — (povinné) |
-| `slackAppToken` | App-Level Token (`xapp-...`) | — (povinné) |
+| `slackBotToken` | Token OAuth pro bota (`xoxb-...`) | — (povinné) |
+| `slackAppToken` | Token aplikace (`xapp-...`) | — (povinné) |
 | `slackChannelId` | ID cílového kanálu (`C0XXXXXXX`) | — (povinné) |
-| `timezone` | Časová zóna (IANA format) | `Europe/Prague` |
+| `timezone` | Časové pásmo (formát IANA) | `Europe/Prague` |
 | `postHour` | Hodina odeslání (0–23) | `18` |
 | `postMinute` | Minuta odeslání (0–59) | `0` |
-| `stateDatabasePath` | Cesta k databázi SQLite | `data/state.sqlite` nebo cesta odvozená z `stateFilePath` |
-| `stateFilePath` | Cesta k původnímu JSON pro import | `data/state.json` |
+| `stateDatabasePath` | Cesta k databázi SQLite | `data/state.sqlite` |
 
-Paths are relative to the bot's working directory. When `stateDatabasePath` is omitted, the bot replaces the `.json` suffix of `stateFilePath` with `.sqlite`, or appends `.sqlite` to paths with other suffixes.
+Relativní cesty se vyhodnocují vůči pracovnímu adresáři bota. Pokud máš existující databázi na jiném místě, nastav její cestu v položce `stateDatabasePath`.
 
-## Nastavení Slack app
+## Nastavení aplikace ve Slacku
 
-### 1. Vytvoř app
-- Jdi na https://api.slack.com/apps → **Create New App → From scratch**
+### 1. Vytvoř aplikaci
 
-### 2. Bot Token Scopes
-- **OAuth & Permissions → Bot Token Scopes** – přidej:
+- V seznamu aplikací vyber **Create New App → From scratch**. [Aplikace Slack](https://api.slack.com/apps)
+
+### 2. Nastav oprávnění bota
+
+- V nabídce **OAuth & Permissions → Bot Token Scopes** přidej následující oprávnění.
   - `chat:write`
   - `reactions:read`
   - `reactions:write`
   - `channels:history`
   - `groups:history`
   - `users:read`
-  - `files:write` (upload and remove private vacation timeline images)
-  - `files:read` (validate cached Slack file IDs before reuse)
+  - `files:write` (nahrávání a mazání soukromých obrázků s přehledem dovolených)
+  - `files:read` (ověření uložených identifikátorů souborů ve Slacku před dalším použitím)
 - Klikni **Install to Workspace → Allow**
 - Zkopíruj **Bot User OAuth Token** (`xoxb-...`) do `SLACK_BOT_TOKEN`
 
-### 3. Socket Mode
-- **Socket Mode → Enable Socket Mode**
-- Vygeneruj App-Level Token se scope `connections:write`
+### 3. Zapni režim Socket Mode
+
+- Vyber **Socket Mode → Enable Socket Mode**
+- Vygeneruj **App-Level Token** s oprávněním `connections:write`
 - Zkopíruj token (`xapp-...`) do `SLACK_APP_TOKEN`
 
-### 4. Event Subscriptions
-- **Event Subscriptions → Enable Events**
-- Přidej bot eventy: `reaction_added`, `reaction_removed`
+### 4. Nastav odběr událostí
+
+- Vyber **Event Subscriptions → Enable Events**
+- Přidej odběr událostí `reaction_added` a `reaction_removed`
 - Ulož změny
 
 ### 5. Pozvi bota do kanálu
-- V Slacku napiš do cílového kanálu: `/invite @nazev-bota`
 
-## Planned vacation timeline
+- Do cílového kanálu ve Slacku napiš `/invite @nazev-bota`
 
-**Show all** displays the onsite roster while it loads the vacation timeline below. The timeline starts at the current month in the bot's configured timezone and includes month navigation and exact vacation dates. Use **Planned Absences** in the daily message to manage ongoing and upcoming entries. Completed vacations stay available in their historical months, including vacations of former team members.
+## Kalendář plánovaných dovolených
 
-Add `files:write` and `files:read` to the existing app's bot scopes, then reinstall or reauthorize it in the workspace before restarting the bot. The bot completes uploads without a channel destination and uses the authenticated Slack file URL in the modal when available. The date list remains available if a timeline image can't be displayed. [Slack file uploads](https://docs.slack.dev/reference/methods/files.completeUploadExternal/) · [Block Kit Slack file reference](https://docs.slack.dev/reference/block-kit/composition-objects/slack-file-object/)
+Tlačítko **Show all** zobrazí seznam lidí v kanceláři a pod ním načte kalendář dovolených. Kalendář se otevře na aktuálním měsíci podle časového pásma bota. Můžeš listovat mezi měsíci a zobrazit přesné termíny dovolených. Probíhající a budoucí absence můžeš spravovat přes tlačítko **Planned Absences** v denní zprávě. V minulých měsících jsou dostupné i skončené dovolené, včetně dovolených bývalých členů týmu.
 
-The bot keeps the image index and avatar cache beside the SQLite database. It reuses the original cache names when the legacy JSON path is in the same directory. The image cache keeps up to 24 private Slack images and cleans up expired images when used. The avatar cache keeps up to 128 avatars for up to seven days and refreshes an avatar when its URL changes.
+Pokud aplikaci už používáš, přidej botovi oprávnění `files:write` a `files:read`. Potom aplikaci znovu nainstaluj do pracovního prostoru nebo jí znovu uděl přístup a restartuj bota. Bot nahrává obrázky bez určení cílového kanálu. Pokud je dostupná adresa souboru ve Slacku s ověřeným přístupem, použije ji v dialogu. Když se obrázek nepodaří zobrazit, termíny zůstanou dostupné v textovém seznamu. [Nahrávání souborů do Slacku](https://docs.slack.dev/reference/methods/files.completeUploadExternal/) · [Odkaz na soubor ve Slack Block Kitu](https://docs.slack.dev/reference/block-kit/composition-objects/slack-file-object/)
 
-## Deploying and upgrading storage
+Bot ukládá evidenci obrázků a mezipaměť profilových fotek vedle databáze SQLite. Uchovává až 24 soukromých obrázků ve Slacku a při použití mezipaměti odstraňuje ty, kterým vypršela platnost. Ukládá také až 128 profilových fotek po dobu nejvýše sedmi dnů. Fotku obnoví, když se změní její adresa.
 
-Run `npm ci` and `npm run build` on the build machine, then copy `dist/index.js` to the server. Check that the bot service uses Node.js 22.13.0 or later and has write access to the database directory on persistent storage. Start it with `node index.js --config /path/to/config.yaml`.
+## Nasazení
 
-For an upgrade from JSON, stop the old process and back up the file at `stateFilePath` before starting the new bundle. The first startup imports the snapshot into SQLite and keeps the original JSON available as a backup. Future writes go to SQLite. Entries already deleted by the old bot can only be recovered from an older backup. If import fails, correct the reported source error and restart to retry the import.
+Na počítači, kde aplikaci sestavuješ, spusť `npm ci` a `npm run build`. Potom zkopíruj `dist/index.js` na server. Ověř, že služba bota používá Node.js 22.13.0 nebo novější a má právo zapisovat do adresáře databáze na trvalém úložišti. Bota spusť příkazem `node index.js --config /path/to/config.yaml`.
 
 ## Struktura projektu
 
@@ -146,10 +148,10 @@ For an upgrade from JSON, stop the old process and back up the file at `stateFil
 └── tsconfig.json
 ```
 
-## Possible next improvements
+## Možná vylepšení
 
 - České státní svátky
-- Slash command pro ruční odeslání HO zprávy
-- Přechod z reactions na buttons
+- Příkaz ve Slacku pro ruční odeslání zprávy o práci z domova
+- Přechod z reakcí na tlačítka
 - Nasazení na server (Railway, Render, VPS)
 

@@ -6,7 +6,7 @@ import { StateStore } from "./state";
 
 async function sendNow(): Promise<void> {
   const config = loadConfig();
-  const stateStore = StateStore.open(config.stateDatabasePath, config.stateFilePath);
+  const stateStore = StateStore.open(config.stateDatabasePath);
   try {
     const app = createSlackApp(config);
     await app.start();

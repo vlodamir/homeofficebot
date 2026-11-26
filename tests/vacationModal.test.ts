@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { App, types } from "@slack/bolt";
@@ -246,35 +246,26 @@ test("completed vacations leave management views and stay in the historical Slac
   assert.ok(JSON.stringify(slack.updates.at(-1)?.view.blocks).includes(`Jana · ${pastDate}`));
 });
 
-test("the timeline image uses the database directory when stateFilePath is omitted", async () => {
+test("the timeline image cache uses the configured SQLite database path", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "homeofficebot-vacation-cache-"));
   const configPath = path.join(directory, "config.yaml");
-  const originalDirectory = process.cwd();
+  const databasePath = path.join(directory, "storage", "bot.sqlite");
   try {
-    // Opening this path as a cache file would fail. The configured database is elsewhere.
-    mkdirSync(path.join(directory, "data", "state.json.B1.vacation-images.json"), { recursive: true });
     writeFileSync(configPath, [
       "slackBotToken: xoxb-test",
       "slackAppToken: xapp-test",
       "slackChannelId: C1",
-      "stateDatabasePath: storage/bot.sqlite",
+      `stateDatabasePath: ${JSON.stringify(databasePath)}`,
     ].join("\n"));
-    process.chdir(directory);
-    let config;
-    try {
-      config = loadConfig(configPath);
-    } finally {
-      process.chdir(originalDirectory);
-    }
+    const config = loadConfig(configPath);
 
-    const store = StateStore.open(config.stateDatabasePath, config.stateFilePath);
+    const store = StateStore.open(config.stateDatabasePath);
     try {
       store.tryAddPlannedOutOfOffice(todayVacation());
-      const slack = testSlack([], { stateStore: store, vacationCachePrefix: config.vacationCachePrefix });
+      const slack = testSlack([], { stateStore: store, vacationCachePrefix: config.stateDatabasePath });
       await slack.click("show_all_in_office");
       assert.ok(slack.updates.at(-1)?.view.blocks.some((block) => block.type === "image"));
-      const indexPath = path.join(directory, "storage", "bot.sqlite.B1.vacation-images.json");
-      assert.match(readFileSync(indexPath, "utf8"), /"fileId":"F1"/);
+      assert.match(readFileSync(`${databasePath}.B1.vacation-images.json`, "utf8"), /"fileId":"F1"/);
     } finally {
       store.close();
     }

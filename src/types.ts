@@ -5,9 +5,7 @@ export interface AppConfig {
   timezone: string;
   postHour: number;
   postMinute: number;
-  stateFilePath: string;
   stateDatabasePath: string;
-  vacationCachePrefix: string;
   adminUsers: string[];
   teamMembers?: string[];
 }

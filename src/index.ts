@@ -24,7 +24,7 @@ async function runStartupCatchUp(app: App, config: AppConfig, stateStore: StateS
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const stateStore = StateStore.open(config.stateDatabasePath, config.stateFilePath);
+  const stateStore = StateStore.open(config.stateDatabasePath);
 
   const app = createSlackApp(config);
   registerGlobalErrorHandler(app);
@@ -32,7 +32,7 @@ async function main(): Promise<void> {
   const botUserId = await resolveBotUserId(app);
   const runtime = { botUserId };
 
-  registerButtonHandlers(app, stateStore, runtime, config.timezone, config.vacationCachePrefix);
+  registerButtonHandlers(app, stateStore, runtime, config.timezone, config.stateDatabasePath);
   registerPlannedOOOHandlers(app, stateStore, runtime, config.timezone);
   registerAdminHandlers(app, stateStore, runtime, config.timezone, config.adminUsers);
 
