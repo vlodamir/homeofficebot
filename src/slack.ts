@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { App } from "@slack/bolt";
-import { buildHoMessageBlocks, buildShowAllBlocks } from "./hoMessage";
+import { buildHoMessageBlocks, buildShowAllBlocks, isActiveOrUpcomingVacation } from "./hoMessage";
 import { logger } from "./logger";
 import { StateStore } from "./state";
 import { AppConfig, HOMessageState, RuntimeContext, PlannedOutOfOffice } from "./types";
@@ -456,7 +456,7 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
     const today = getLocalDateInTimeZone(new Date(), timezone).isoDate;
     const plannedEntries = stateStore.getPlannedOutOfOffice();
     const userIds = [...new Set(plannedEntries
-      .filter((entry) => !entry.endDate || entry.endDate >= today)
+      .filter((entry) => isActiveOrUpcomingVacation(entry, today))
       .map((entry) => entry.userId))];
     const userNames = new Map(await Promise.all(userIds.map(async (userId) =>
       [userId, await resolveUserDisplayName(app, userId)] as const
