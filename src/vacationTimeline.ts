@@ -6,7 +6,7 @@ import boldFont from "../assets/fonts/DejaVuSans-Bold.ttf";
 import { VacationAvatarCache } from "./vacationAvatars";
 import { VacationMonth } from "./vacationMonth";
 
-export const VACATION_TIMELINE_VERSION = 3;
+export const VACATION_TIMELINE_VERSION = 4;
 
 export interface VacationProfile {
   name: string;
@@ -24,7 +24,7 @@ const style = {
   barRadius: 7,
   scale: 3,
   font: "DejaVu Sans, sans-serif",
-  fonts: { title: 25, label: 15, name: 14, day: 14, small: 11 },
+  fonts: { title: 25, label: 15, name: 12.5, day: 14, small: 11 },
   background: "#f5f7fb",
   panel: "#ffffff",
   ink: "#1e2940",
@@ -47,6 +47,9 @@ const style = {
 
 const weekdays = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 const panelDays = 16;
+const rendererOptions = {
+  font: { fontBuffers: [regularFont, boldFont], defaultFontFamily: "DejaVu Sans" },
+};
 let rendererReady: Promise<void> | undefined;
 
 function escapeXml(value: string): string {
@@ -64,7 +67,7 @@ function text(x: number, y: number, value: string, size: number, fill = style.in
 }
 
 function employeeNameLines(name: string): string[] {
-  const limit = 14;
+  const limit = 16;
   const characters = [...name];
   if (characters.length <= limit) return [name];
   const firstLine = characters.slice(0, limit + 1).join("");
@@ -76,19 +79,44 @@ function employeeNameLines(name: string): string[] {
     : `${remaining.slice(0, limit - 1).join("")}…`];
 }
 
+function employeeNameText(lines: string[], x: number, y: number, size: number): string {
+  const firstBaseline = y + (lines.length === 1 ? 23 : 15);
+  return lines.map((line, index) => text(x, firstBaseline + index * 15, line, size, style.ink, 500)).join("");
+}
+
+function fittedNameSize(lines: string[], width: number): number {
+  const size = style.fonts.name;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="${style.rowHeight}" font-family="${style.font}">${employeeNameText(lines, 0, 0, size)}</svg>`;
+  const label = new Resvg(svg, rendererOptions);
+  try {
+    const bounds = label.innerBBox();
+    const right = bounds ? bounds.x + bounds.width : 0;
+    bounds?.free();
+    return right > width - 1 ? size * (width - 1) / right : size;
+  } finally {
+    label.free();
+  }
+}
+
 export async function renderVacationTimeline(
   month: VacationMonth,
   profiles: ReadonlyMap<string, VacationProfile>,
   avatars = new VacationAvatarCache(),
 ): Promise<Buffer> {
   const { padding, nameWidth, dayWidth, rowHeight, headerHeight, histogramHeight, panelGap, fonts } = style;
-  const employees = await Promise.all(month.employees.map(async (employee) => {
+  const nameLabelWidth = nameWidth - 47;
+  const employeeProfiles = Promise.all(month.employees.map(async (employee) => {
     const profile = profiles.get(employee.userId);
     const name = (profile?.name || employee.userId).replace(/\s+/g, " ").trim();
     const colorIndex = createHash("sha256").update(employee.userId).digest().readUInt32BE() % style.employees.length;
     return { ...employee, name, color: style.employees[colorIndex], avatar: await avatars.get(profile?.avatarUrl) };
   }));
+  const [employees] = await Promise.all([employeeProfiles, rendererReady ??= initWasm(rendererWasm)]);
   employees.sort((left, right) => left.name.localeCompare(right.name, "cs") || left.userId.localeCompare(right.userId));
+  const employeeRows = employees.map((employee) => {
+    const nameLines = employeeNameLines(employee.name);
+    return { ...employee, nameLines, nameSize: fittedNameSize(nameLines, nameLabelWidth) };
+  });
 
   const panelWidth = nameWidth + panelDays * dayWidth;
   const width = padding * 2 + panelWidth;
@@ -101,7 +129,7 @@ export async function renderVacationTimeline(
     const days = month.days.slice(offset, offset + panelDays);
     const firstDay = days[0].day;
     const lastDay = days[days.length - 1].day;
-    const rows = employees.filter(({ spans }) => spans.some((span) => span.firstDay <= lastDay && span.lastDay >= firstDay));
+    const rows = employeeRows.filter(({ spans }) => spans.some((span) => span.firstDay <= lastDay && span.lastDay >= firstDay));
     const bodyTop = y + headerHeight;
     const histogramTop = bodyTop + Math.max(rows.length, 1) * rowHeight;
     const baseline = histogramTop + histogramHeight - 7;
@@ -138,7 +166,7 @@ export async function renderVacationTimeline(
     elements.push(text(padding + 12, histogramTop + 26, "People away", fonts.label, style.secondary, 550));
     if (rows.length === 0) elements.push(text(gridX + 8, bodyTop + 24, "No vacations", fonts.label, style.secondary));
 
-    rows.forEach(({ name, avatar, color, spans }, index) => {
+    rows.forEach(({ name, nameLines, nameSize, avatar, color, spans }, index) => {
       const top = bodyTop + index * rowHeight;
       const [fill, ink] = color;
       const nameX = padding + 43;
@@ -151,11 +179,8 @@ export async function renderVacationTimeline(
         elements.push(`<clipPath id="${clipId}-avatar"><circle cx="${avatarX + 11}" cy="${top + 18}" r="11"/></clipPath>`);
         elements.push(`<image x="${avatarX}" y="${top + 7}" width="22" height="22" xlink:href="${avatar}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId}-avatar)"/>`);
       }
-      elements.push(`<clipPath id="${clipId}">${rect(nameX, top, nameWidth - 47, rowHeight, style.panel)}</clipPath>`);
-      const lines = employeeNameLines(name);
-      const firstBaseline = top + (lines.length === 1 ? 23 : 15);
-      const nameText = lines.map((line, lineIndex) => text(nameX, firstBaseline + lineIndex * 15, line, fonts.name, style.ink, 500));
-      elements.push(`<g clip-path="url(#${clipId})">${nameText.join("")}</g>`);
+      elements.push(`<clipPath id="${clipId}">${rect(nameX - 1, top, nameLabelWidth + 1, rowHeight, style.panel)}</clipPath>`);
+      elements.push(`<g clip-path="url(#${clipId})">${employeeNameText(nameLines, nameX, top, nameSize)}</g>`);
 
       for (const span of spans) {
         const from = Math.max(span.firstDay, firstDay);
@@ -187,10 +212,7 @@ export async function renderVacationTimeline(
 
   const height = y + 29;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width * style.scale}" height="${height * style.scale}" viewBox="0 0 ${width} ${height}" font-family="${style.font}">${rect(0, 0, width, height, style.background, 18)}${elements.join("")}</svg>`;
-  await (rendererReady ??= initWasm(rendererWasm));
-  const renderer = new Resvg(svg, {
-    font: { fontBuffers: [regularFont, boldFont], defaultFontFamily: "DejaVu Sans" },
-  });
+  const renderer = new Resvg(svg, rendererOptions);
   try {
     const image = renderer.render();
     try {
