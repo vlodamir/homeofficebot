@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { App } from "@slack/bolt";
-import { buildHoMessageBlocks, buildShowAllBlocks, isActiveOrUpcomingVacation } from "./hoMessage";
+import { App, type BlockAction, type ButtonAction, type types } from "@slack/bolt";
+import { buildHoMessageBlocks } from "./hoMessage";
 import { logger } from "./logger";
 import { StateStore } from "./state";
 import { AppConfig, HOMessageState, RuntimeContext, PlannedOutOfOffice } from "./types";
 import { getCzechWeekdayNameFromIso, getLocalDateInTimeZone } from "./date";
+import { registerVacationModal } from "./vacationModal";
+import type { VacationProfile } from "./vacationTimeline";
 
 export function createSlackApp(config: AppConfig): App {
   return new App({
@@ -99,6 +101,10 @@ export async function postHoMessage(app: App, channelId: string, targetDate: str
 }
 
 async function resolveUserDisplayName(app: App, userId: string): Promise<string> {
+  return (await resolveUserProfile(app, userId)).name;
+}
+
+async function resolveUserProfile(app: App, userId: string): Promise<VacationProfile> {
   try {
     const response = await app.client.users.info({ user: userId });
     const profile = response.user?.profile;
@@ -106,10 +112,10 @@ async function resolveUserDisplayName(app: App, userId: string): Promise<string>
     const displayName = profile?.display_name?.trim();
     const username = response.user?.name?.trim();
 
-    return realName || displayName || username || userId;
+    return { name: realName || displayName || username || userId, avatarUrl: profile?.image_48 };
   } catch (error) {
     logger.warn("Failed to resolve user info, falling back to user ID", { userId, error });
-    return userId;
+    return { name: userId };
   }
 }
 
@@ -361,7 +367,7 @@ export async function syncTrackedHoMessage(app: App, stateStore: StateStore, run
   });
 }
 
-export function registerButtonHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, timezone: string): void {
+export function registerButtonHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext, timezone: string, stateFilePath?: string): void {
   app.action(/^user_state_button_(onsite|ho|vacation)$/, async ({ ack, body }) => {
     await ack();
 
@@ -423,11 +429,12 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
     }
   });
 
-  app.action("planned_ooo_button", async ({ ack, body }) => {
+  app.action<BlockAction<ButtonAction>>("planned_ooo_button", async ({ ack, body }) => {
     await ack();
 
     const trackedMessage = stateStore.getLastHoMessage();
-    const hasExpired = stateStore.cleanupExpiredPlannedOutOfOffice(trackedMessage!.targetDate);
+    const targetDate = trackedMessage?.targetDate ?? getLocalDateInTimeZone(new Date(), timezone).isoDate;
+    const hasExpired = stateStore.cleanupExpiredPlannedOutOfOffice(targetDate);
     if (hasExpired) {
       await stateStore.saveState();
     }
@@ -435,45 +442,23 @@ export function registerButtonHandlers(app: App, stateStore: StateStore, runtime
     const plannedEntries = stateStore.getPlannedOutOfOffice();
     const blocks = buildPlannedOOOModal(body.user.id, plannedEntries);
 
-    await app.client.views.open({
-      trigger_id: (body as any).trigger_id,
-      view: {
-        type: "modal",
-        callback_id: "planned_ooo_modal",
-        title: {
-          type: "plain_text",
-          text: "Planned Out of Office",
-        },
-        blocks,
+    const view: types.ModalView = {
+      type: "modal",
+      callback_id: "planned_ooo_modal",
+      title: {
+        type: "plain_text",
+        text: "Planned Out of Office",
       },
-    });
+      blocks,
+    };
+    if (body.view) {
+      await app.client.views.push({ trigger_id: body.trigger_id, view });
+    } else {
+      await app.client.views.open({ trigger_id: body.trigger_id, view });
+    }
   });
 
-  app.action("show_all_in_office", async ({ ack, body }) => {
-    await ack();
-    
-    const inOfficeNames = JSON.parse((body as any).actions[0].value) as string[];
-    const today = getLocalDateInTimeZone(new Date(), timezone).isoDate;
-    const plannedEntries = stateStore.getPlannedOutOfOffice();
-    const userIds = [...new Set(plannedEntries
-      .filter((entry) => isActiveOrUpcomingVacation(entry, today))
-      .map((entry) => entry.userId))];
-    const userNames = new Map(await Promise.all(userIds.map(async (userId) =>
-      [userId, await resolveUserDisplayName(app, userId)] as const
-    )));
-    await app.client.views.open({
-      trigger_id: (body as any).trigger_id,
-      view: {
-        type: "modal",
-        callback_id: "show_all_modal",
-        title: {
-          type: "plain_text",
-          text: "Team overview",
-        },
-        blocks: buildShowAllBlocks(inOfficeNames, plannedEntries, today, userNames),
-      },
-    });
-  });
+  registerVacationModal(app, stateStore, timezone, runtime.botUserId, (userId) => resolveUserProfile(app, userId), stateFilePath);
 }
 
 export function registerPlannedOOOHandlers(app: App, stateStore: StateStore, runtime: RuntimeContext): void {

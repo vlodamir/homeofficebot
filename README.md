@@ -83,6 +83,8 @@ Team members are now stored in the state file (`data/state.json`) and managed wi
   - `channels:history`
   - `groups:history`
   - `users:read`
+  - `files:write` (upload and remove private vacation timeline images)
+  - `files:read` (validate cached Slack file IDs before reuse)
 - Klikni **Install to Workspace → Allow**
 - Zkopíruj **Bot User OAuth Token** (`xoxb-...`) do `SLACK_BOT_TOKEN`
 
@@ -98,6 +100,18 @@ Team members are now stored in the state file (`data/state.json`) and managed wi
 
 ### 5. Pozvi bota do kanálu
 - V Slacku napiš do cílového kanálu: `/invite @nazev-bota`
+
+## Planned vacation timeline
+
+**Show all** displays the onsite roster while it loads the vacation timeline below. The timeline starts at the current month in the bot's configured timezone and includes month navigation and exact vacation dates. Use **Planned Absences** in the daily message to manage entries. Past months reflect the records still present in the existing state store.
+
+Add `files:write` and `files:read` to the existing app's bot scopes, then reinstall or reauthorize it in the workspace before restarting the bot. The bot completes uploads without a channel destination and uses the authenticated Slack file URL in the modal when available. The date list remains available if a timeline image can't be displayed. [Slack file uploads](https://docs.slack.dev/reference/methods/files.completeUploadExternal/) · [Block Kit Slack file reference](https://docs.slack.dev/reference/block-kit/composition-objects/slack-file-object/)
+
+Run `npm ci` and `npm run build` on the build machine, then copy `dist/index.js` to the server. The bundle includes the JavaScript dependencies, WebAssembly renderer, and chart fonts. The server needs Node.js 18.18 or later and the bot's existing configuration and writable state path. Start it with `node index.js --config /path/to/config.yaml`.
+
+The bot uses the existing YAML configuration. It writes a small image cache index beside `stateFilePath` and keeps up to 24 private images per cache. Expired images are cleaned up when the cache is used. Keep the cache index on the same persistent volume as the bot state across restarts.
+
+The bot also caches up to 128 Slack avatars on disk beside `stateFilePath`. New charts reuse cached avatars for up to seven days. A changed Slack avatar URL triggers a fresh download.
 
 ## Struktura projektu
 
@@ -118,7 +132,12 @@ Team members are now stored in the state file (`data/state.json`) and managed wi
 │   ├── sendNow.ts
 │   ├── slack.ts
 │   ├── state.ts
-│   └── types.ts
+│   ├── types.ts
+│   ├── vacationAvatars.ts
+│   ├── vacationImages.ts
+│   ├── vacationModal.ts
+│   ├── vacationMonth.ts
+│   └── vacationTimeline.ts
 └── tsconfig.json
 ```
 

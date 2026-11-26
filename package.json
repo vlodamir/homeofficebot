@@ -5,17 +5,18 @@
   "description": "Slack bot for daily home office voting",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc --noEmit -p tsconfig.json && esbuild src/index.ts --bundle --platform=node --target=node18 --outfile=dist/index.js",
-    "dev": "tsx src/index.ts -- --config config.yaml",
-    "send-now": "tsx src/sendNow.ts -- --config config.yaml",
+    "build": "npm run typecheck && node scripts/build.mjs",
+    "dev": "node scripts/build.mjs && node dist/index.js -- --config config.yaml",
+    "send-now": "node scripts/build.mjs send-now && node dist/sendNow.js -- --config config.yaml",
     "start": "node dist/index.js -- --config config.yaml",
-    "test": "tsc -p tsconfig.test.json && node dist-test/tests/run-tests.js",
+    "test": "tsc --noEmit -p tsconfig.test.json && node scripts/build.mjs test && node dist-test/run-tests.js",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "engines": {
     "node": ">=18.18.0"
   },
   "dependencies": {
+    "@resvg/resvg-wasm": "^2.6.2",
     "@slack/bolt": "^4.5.0",
     "node-cron": "^4.2.1",
     "yaml": "^2.4.1"
@@ -23,7 +24,6 @@
   "devDependencies": {
     "@types/node": "^24.5.2",
     "esbuild": "^0.25.0",
-    "tsx": "^4.20.5",
     "typescript": "^5.9.3"
   }
 }

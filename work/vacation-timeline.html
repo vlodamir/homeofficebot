@@ -1,0 +1,78 @@
+<figure id="team-vacation-timeline" aria-labelledby="vacation-timeline-title">
+  <figcaption>
+    <h2 id="vacation-timeline-title">Team vacations</h2>
+    <p class="text-small">26 Nov – 2 Dec · Sample schedule</p>
+  </figcaption>
+  <table aria-label="Seven-day vacation timeline">
+    <colgroup><col class="people"></colgroup>
+    <colgroup span="7"></colgroup>
+    <thead>
+      <tr>
+        <th scope="col"><span class="sr-only">Teammate</span></th>
+        <th scope="col" class="today"><time datetime="2026-11-26">26</time><span class="text-small">Thu</span><span class="sr-only"> (today)</span></th>
+        <th scope="col"><time datetime="2026-11-27">27</time><span class="text-small">Fri</span></th>
+        <th scope="col"><time datetime="2026-11-28">28</time><span class="text-small">Sat</span></th>
+        <th scope="col"><time datetime="2026-11-29">29</time><span class="text-small">Sun</span></th>
+        <th scope="col"><time datetime="2026-11-30">30</time><span class="text-small">Mon</span></th>
+        <th scope="col"><time datetime="2026-12-01">1</time><span class="text-small">Tue</span></th>
+        <th scope="col"><time datetime="2026-12-02">2</time><span class="text-small">Wed</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th scope="row">Jana<span class="text-small">26–30 Nov</span></th>
+        <td class="today bar start"><span class="sr-only">On vacation</span></td>
+        <td class="bar"><span class="sr-only">On vacation</span></td>
+        <td class="bar"><span class="sr-only">On vacation</span></td>
+        <td class="bar"><span class="sr-only">On vacation</span></td>
+        <td class="bar end"><span class="sr-only">On vacation</span></td>
+        <td></td>
+        <td></td>
+      </tr>
+      <tr>
+        <th scope="row">Mirek<span class="text-small">27 Nov – 1 Dec</span></th>
+        <td class="today"></td>
+        <td class="bar start"><span class="sr-only">On vacation</span></td>
+        <td class="bar"><span class="sr-only">On vacation</span></td>
+        <td class="bar"><span class="sr-only">On vacation</span></td>
+        <td class="bar"><span class="sr-only">On vacation</span></td>
+        <td class="bar end"><span class="sr-only">On vacation</span></td>
+        <td></td>
+      </tr>
+      <tr>
+        <th scope="row">Tereza<span class="text-small">1–2 Dec</span></th>
+        <td class="today"></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td class="bar start"><span class="sr-only">On vacation</span></td>
+        <td class="bar end"><span class="sr-only">On vacation</span></td>
+      </tr>
+    </tbody>
+  </table>
+</figure>
+<style>
+  #team-vacation-timeline { margin: 0; }
+  #team-vacation-timeline figcaption p { color: var(--muted-foreground); }
+  #team-vacation-timeline table { width: 100%; table-layout: fixed; border-spacing: 0; margin-top: var(--font-size-base); }
+  #team-vacation-timeline .people { width: clamp(98px, 29%, 168px); }
+  #team-vacation-timeline th, #team-vacation-timeline td { padding: calc(var(--font-size-base) * .5) 0; }
+  #team-vacation-timeline th { font-weight: 500; }
+  #team-vacation-timeline th .text-small { display: block; color: var(--muted-foreground); font-weight: 400; }
+  #team-vacation-timeline thead th { text-align: center; }
+  #team-vacation-timeline tbody th { text-align: left; padding-right: 4px; }
+  #team-vacation-timeline td { border-top: 1px solid var(--border); border-right: 1px solid var(--border); }
+  #team-vacation-timeline .today { background-color: var(--muted); }
+  #team-vacation-timeline .bar { position: relative; }
+  #team-vacation-timeline .bar::before {
+    content: "";
+    position: absolute;
+    inset: 50% -1px auto 0;
+    height: var(--font-size-base);
+    transform: translateY(-50%);
+    background-color: var(--viz-series-1);
+  }
+  #team-vacation-timeline .start::before { left: 3px; border-radius: 4px 0 0 4px; }
+  #team-vacation-timeline .end::before { right: 3px; border-radius: 0 4px 4px 0; }
+</style>
