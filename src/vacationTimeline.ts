@@ -6,7 +6,7 @@ import boldFont from "../assets/fonts/DejaVuSans-Bold.ttf";
 import { VacationAvatarCache } from "./vacationAvatars";
 import { VacationMonth } from "./vacationMonth";
 
-export const VACATION_TIMELINE_VERSION = 4;
+export const VACATION_TIMELINE_VERSION = 5;
 
 export interface VacationProfile {
   name: string;
@@ -32,10 +32,8 @@ const style = {
   grid: "#e7ebf2",
   weekend: "#f0f2f6",
   holiday: "#fbe5ed",
-  overlap: "#fff1da",
   today: "#405dd8",
   histogram: "#a2afca",
-  histogramOverlap: "#c7862d",
   employees: [
     ["#c9d5ff", "#2d4085"], ["#bfe6df", "#235b52"], ["#ead5f7", "#643c7c"],
     ["#ffdbc8", "#813e29"], ["#c8e1f6", "#26547a"], ["#dce9be", "#425d23"],
@@ -145,7 +143,6 @@ export async function renderVacationTimeline(
       if (holiday || weekend) {
         elements.push(rect(x, y + 6, dayWidth, panelHeight - 12, holiday ? style.holiday : style.weekend));
       }
-      if (away > 1) elements.push(rect(x, bodyTop, dayWidth, baseline - bodyTop + 2, style.overlap));
       elements.push(rect(x, bodyTop, 1, baseline - bodyTop + 2, style.grid));
       if (day === month.today) {
         elements.push(rect(middle - 8.5, y + 16, 17, 19, style.today, 5));
@@ -156,8 +153,7 @@ export async function renderVacationTimeline(
 
       if (away > 0) {
         const barHeight = Math.round((away / peak) * 19) + 2;
-        const color = away > 1 ? style.histogramOverlap : style.histogram;
-        elements.push(rect(middle - 5, baseline - barHeight, 10, barHeight, color, 2));
+        elements.push(rect(middle - 5, baseline - barHeight, 10, barHeight, style.histogram, 2));
         elements.push(text(middle, baseline - barHeight - 3, String(away), fonts.small, style.ink, 600, true));
       }
     }
@@ -202,8 +198,7 @@ export async function renderVacationTimeline(
     { x: 0, color: style.employees[0][0], label: "Vacation" },
     { x: 100, color: style.weekend, label: "Weekend" },
     { x: 202, color: style.holiday, label: "Holiday" },
-    { x: 298, color: style.overlap, label: "2+ away" },
-    { x: 391, color: style.today, label: "Today" },
+    { x: 298, color: style.today, label: "Today" },
   ];
   for (const item of legendItems) {
     elements.push(rect(padding + item.x, y + 2, item.label === "Today" ? 2 : 14, 13, item.color, 2));

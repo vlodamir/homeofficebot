@@ -93,7 +93,7 @@ function monthView(
     blocks.push({
       type: "image",
       slack_file: image,
-      alt_text: `Vacation timeline for ${month.label}. ${summary}. Pink marks Czech public holidays, gray marks weekends, and amber marks days with two or more employees away. Exact vacation dates are listed below.`,
+      alt_text: `Vacation timeline for ${month.label}. ${summary}. Pink marks Czech public holidays, and gray marks weekends. Exact vacation dates are listed below.`,
     });
   } else if (count > 0) {
     blocks.push(section("The timeline image is unavailable. Vacation dates are listed below."));
