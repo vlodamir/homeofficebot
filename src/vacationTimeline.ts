@@ -6,7 +6,7 @@ import boldFont from "../assets/fonts/DejaVuSans-Bold.ttf";
 import { VacationAvatarCache } from "./vacationAvatars";
 import { VacationMonth } from "./vacationMonth";
 
-export const VACATION_TIMELINE_VERSION = 5;
+export const VACATION_TIMELINE_VERSION = 6;
 
 export interface VacationProfile {
   name: string;
@@ -14,13 +14,13 @@ export interface VacationProfile {
 }
 
 const style = {
+  width: 1104,
   padding: 20,
   nameWidth: 160,
-  dayWidth: 22,
   rowHeight: 37,
   headerHeight: 46,
   histogramHeight: 42,
-  panelGap: 14,
+  legendGap: 14,
   barRadius: 7,
   scale: 3,
   font: "DejaVu Sans, sans-serif",
@@ -44,7 +44,6 @@ const style = {
 };
 
 const weekdays = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
-const panelDays = 16;
 const rendererOptions = {
   font: { fontBuffers: [regularFont, boldFont], defaultFontFamily: "DejaVu Sans" },
 };
@@ -101,7 +100,7 @@ export async function renderVacationTimeline(
   profiles: ReadonlyMap<string, VacationProfile>,
   avatars = new VacationAvatarCache(),
 ): Promise<Buffer> {
-  const { padding, nameWidth, dayWidth, rowHeight, headerHeight, histogramHeight, panelGap, fonts } = style;
+  const { width, padding, nameWidth, rowHeight, headerHeight, histogramHeight, legendGap, fonts } = style;
   const nameLabelWidth = nameWidth - 47;
   const employeeProfiles = Promise.all(month.employees.map(async (employee) => {
     const profile = profiles.get(employee.userId);
@@ -116,84 +115,78 @@ export async function renderVacationTimeline(
     return { ...employee, nameLines, nameSize: fittedNameSize(nameLines, nameLabelWidth) };
   });
 
-  const panelWidth = nameWidth + panelDays * dayWidth;
-  const width = padding * 2 + panelWidth;
+  const chartWidth = width - padding * 2;
+  const dayWidth = (chartWidth - nameWidth) / month.days.length;
   const gridX = padding + nameWidth;
   const peak = Math.max(1, ...month.days.map((day) => day.away));
-  const elements = [text(padding, 39, month.label, fonts.title, style.ink, 650)];
-  let y = 55;
+  const chartTop = 55;
+  const bodyTop = chartTop + headerHeight;
+  const histogramTop = bodyTop + Math.max(employeeRows.length, 1) * rowHeight;
+  const chartBottom = histogramTop + histogramHeight;
+  const baseline = chartBottom - 7;
+  const chartHeight = chartBottom - chartTop;
+  const elements = [
+    text(padding, 39, month.label, fonts.title, style.ink, 650),
+    rect(padding, chartTop, chartWidth, chartHeight, style.panel, 14),
+    text(padding + 12, chartTop + 28, "Teammate", fonts.label, style.secondary, 600),
+  ];
 
-  for (let offset = 0; offset < month.days.length; offset += panelDays) {
-    const days = month.days.slice(offset, offset + panelDays);
-    const firstDay = days[0].day;
-    const lastDay = days[days.length - 1].day;
-    const rows = employeeRows.filter(({ spans }) => spans.some((span) => span.firstDay <= lastDay && span.lastDay >= firstDay));
-    const bodyTop = y + headerHeight;
-    const histogramTop = bodyTop + Math.max(rows.length, 1) * rowHeight;
-    const baseline = histogramTop + histogramHeight - 7;
-    const panelHeight = baseline + 7 - y;
-
-    elements.push(rect(padding, y, panelWidth, panelHeight, style.panel, 14));
-    elements.push(text(padding + 12, y + 28, "Teammate", fonts.label, style.secondary, 600));
-
-    for (const { day, weekday, holiday, away } of days) {
-      const x = gridX + (day - firstDay) * dayWidth;
-      const middle = x + dayWidth / 2;
-      const weekend = weekday === 0 || weekday === 6;
-      if (holiday || weekend) {
-        elements.push(rect(x, y + 6, dayWidth, panelHeight - 12, holiday ? style.holiday : style.weekend));
-      }
-      elements.push(rect(x, bodyTop, 1, baseline - bodyTop + 2, style.grid));
-      if (day === month.today) {
-        elements.push(rect(middle - 8.5, y + 16, 17, 19, style.today, 5));
-        elements.push(rect(middle - 0.75, bodyTop, 1.5, baseline - bodyTop + 2, style.today));
-      }
-      elements.push(text(middle, y + 13, weekdays[weekday], fonts.small, style.secondary, 400, true));
-      elements.push(text(middle, y + 30, String(day), fonts.day, day === month.today ? style.panel : style.ink, 600, true));
-
-      if (away > 0) {
-        const barHeight = Math.round((away / peak) * 19) + 2;
-        elements.push(rect(middle - 5, baseline - barHeight, 10, barHeight, style.histogram, 2));
-        elements.push(text(middle, baseline - barHeight - 3, String(away), fonts.small, style.ink, 600, true));
-      }
+  for (const { day, weekday, holiday, away } of month.days) {
+    const x = gridX + (day - 1) * dayWidth;
+    const middle = x + dayWidth / 2;
+    const weekend = weekday === 0 || weekday === 6;
+    if (holiday || weekend) {
+      elements.push(rect(x, chartTop + 6, dayWidth, chartHeight - 12, holiday ? style.holiday : style.weekend));
     }
+    elements.push(rect(x, bodyTop, 1, baseline - bodyTop + 2, style.grid));
+    if (day === month.today) {
+      elements.push(rect(middle - 8.5, chartTop + 16, 17, 19, style.today, 5));
+      elements.push(rect(middle - 0.75, bodyTop, 1.5, baseline - bodyTop + 2, style.today));
+    }
+    elements.push(text(middle, chartTop + 13, weekdays[weekday], fonts.small, style.secondary, 400, true));
+    elements.push(text(middle, chartTop + 30, String(day), fonts.day, day === month.today ? style.panel : style.ink, 600, true));
 
-    elements.push(rect(padding + 12, histogramTop, panelWidth - 24, 1, style.grid));
-    elements.push(text(padding + 12, histogramTop + 26, "People away", fonts.label, style.secondary, 550));
-    if (rows.length === 0) elements.push(text(gridX + 8, bodyTop + 24, "No vacations", fonts.label, style.secondary));
-
-    rows.forEach(({ name, nameLines, nameSize, avatar, color, spans }, index) => {
-      const top = bodyTop + index * rowHeight;
-      const [fill, ink] = color;
-      const nameX = padding + 43;
-      const avatarX = padding + 12;
-      const clipId = `employee-${offset}-${index}`;
-      const initials = name.split(" ").slice(0, 2).map((word) => [...word][0]).join("").toLocaleUpperCase();
-      elements.push(rect(avatarX, top + 7, 22, 22, fill, 11));
-      elements.push(text(avatarX + 11, top + 22, initials, fonts.small, ink, 650, true));
-      if (avatar) {
-        elements.push(`<clipPath id="${clipId}-avatar"><circle cx="${avatarX + 11}" cy="${top + 18}" r="11"/></clipPath>`);
-        elements.push(`<image x="${avatarX}" y="${top + 7}" width="22" height="22" xlink:href="${avatar}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId}-avatar)"/>`);
-      }
-      elements.push(`<clipPath id="${clipId}">${rect(nameX - 1, top, nameLabelWidth + 1, rowHeight, style.panel)}</clipPath>`);
-      elements.push(`<g clip-path="url(#${clipId})">${employeeNameText(nameLines, nameX, top, nameSize)}</g>`);
-
-      for (const span of spans) {
-        const from = Math.max(span.firstDay, firstDay);
-        const to = Math.min(span.lastDay, lastDay);
-        if (from > to) continue;
-        const left = gridX + (from - firstDay) * dayWidth + 2;
-        const barWidth = (to - from + 1) * dayWidth - 4;
-        elements.push(rect(left, top + 8, barWidth, 21, fill, style.barRadius));
-        if (span.duration && barWidth >= 40) {
-          elements.push(text(left + barWidth / 2, top + 23, `${span.duration}d`, fonts.small + 1, ink, 650, true));
-        }
-      }
-    });
-
-    y += panelHeight + panelGap;
+    if (away > 0) {
+      const barHeight = Math.round((away / peak) * 19) + 2;
+      elements.push(rect(middle - 5, baseline - barHeight, 10, barHeight, style.histogram, 2));
+      elements.push(text(middle, baseline - barHeight - 3, String(away), fonts.small, style.ink, 600, true));
+    }
   }
 
+  elements.push(rect(padding + 12, histogramTop, chartWidth - 24, 1, style.grid));
+  elements.push(text(padding + 12, histogramTop + 26, "People away", fonts.label, style.secondary, 550));
+  if (employeeRows.length === 0) elements.push(text(gridX + 8, bodyTop + 24, "No vacations", fonts.label, style.secondary));
+
+  employeeRows.forEach(({ name, nameLines, nameSize, avatar, color, spans }, index) => {
+    const top = bodyTop + index * rowHeight;
+    const [fill, ink] = color;
+    const nameX = padding + 43;
+    const avatarX = padding + 12;
+    const clipId = `employee-${index}`;
+    const initials = name.split(" ").slice(0, 2).map((word) => [...word][0]).join("").toLocaleUpperCase();
+    elements.push(rect(avatarX, top + 7, 22, 22, fill, 11));
+    elements.push(text(avatarX + 11, top + 22, initials, fonts.small, ink, 650, true));
+    if (avatar) {
+      elements.push(`<clipPath id="${clipId}-avatar"><circle cx="${avatarX + 11}" cy="${top + 18}" r="11"/></clipPath>`);
+      elements.push(`<image x="${avatarX}" y="${top + 7}" width="22" height="22" xlink:href="${avatar}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId}-avatar)"/>`);
+    }
+    elements.push(`<clipPath id="${clipId}">${rect(nameX - 1, top, nameLabelWidth + 1, rowHeight, style.panel)}</clipPath>`);
+    elements.push(`<g clip-path="url(#${clipId})">${employeeNameText(nameLines, nameX, top, nameSize)}</g>`);
+
+    for (const span of spans) {
+      const from = Math.max(span.firstDay, 1);
+      const to = Math.min(span.lastDay, month.days.length);
+      if (from > to) continue;
+      const left = gridX + (from - 1) * dayWidth + 2;
+      const barWidth = (to - from + 1) * dayWidth - 4;
+      elements.push(rect(left, top + 8, barWidth, 21, fill, style.barRadius));
+      if (span.duration && barWidth >= 40) {
+        elements.push(text(left + barWidth / 2, top + 23, `${span.duration}d`, fonts.small + 1, ink, 650, true));
+      }
+    }
+  });
+
+  const legendTop = chartBottom + legendGap;
   const legendItems = [
     { x: 0, color: style.employees[0][0], label: "Vacation" },
     { x: 100, color: style.weekend, label: "Weekend" },
@@ -201,11 +194,11 @@ export async function renderVacationTimeline(
     { x: 298, color: style.today, label: "Today" },
   ];
   for (const item of legendItems) {
-    elements.push(rect(padding + item.x, y + 2, item.label === "Today" ? 2 : 14, 13, item.color, 2));
-    elements.push(text(padding + item.x + (item.label === "Today" ? 8 : 20), y + 14, item.label, fonts.label, style.secondary));
+    elements.push(rect(padding + item.x, legendTop + 2, item.label === "Today" ? 2 : 14, 13, item.color, 2));
+    elements.push(text(padding + item.x + (item.label === "Today" ? 8 : 20), legendTop + 14, item.label, fonts.label, style.secondary));
   }
 
-  const height = y + 29;
+  const height = legendTop + 29;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width * style.scale}" height="${height * style.scale}" viewBox="0 0 ${width} ${height}" font-family="${style.font}">${rect(0, 0, width, height, style.background, 18)}${elements.join("")}</svg>`;
   const renderer = new Resvg(svg, rendererOptions);
   try {
