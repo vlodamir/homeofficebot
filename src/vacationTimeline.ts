@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { initWasm, Resvg } from "@resvg/resvg-wasm";
 import rendererWasm from "@resvg/resvg-wasm/index_bg.wasm";
 import regularFont from "../assets/fonts/DejaVuSans.ttf";
 import boldFont from "../assets/fonts/DejaVuSans-Bold.ttf";
+import { logger } from "./logger";
 import { VacationAvatarCache } from "./vacationAvatars";
 import { VacationMonth } from "./vacationMonth";
+import { encodeVacationPng } from "./vacationPng";
 
-export const VACATION_TIMELINE_VERSION = 6;
+export const VACATION_TIMELINE_VERSION = 7;
 
 export interface VacationProfile {
   name: string;
@@ -22,7 +25,7 @@ const style = {
   histogramHeight: 42,
   legendGap: 14,
   barRadius: 7,
-  scale: 3,
+  scale: 2,
   font: "DejaVu Sans, sans-serif",
   fonts: { title: 25, label: 15, name: 12.5, day: 14, small: 11 },
   background: "#f5f7fb",
@@ -56,7 +59,8 @@ function escapeXml(value: string): string {
 }
 
 function rect(x: number, y: number, width: number, height: number, fill: string, radius = 0): string {
-  return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="${fill}"/>`;
+  const rendering = radius === 0 ? ' shape-rendering="crispEdges"' : "";
+  return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="${fill}"${rendering}/>`;
 }
 
 function text(x: number, y: number, value: string, size: number, fill = style.ink, weight = 400, center = false): string {
@@ -102,13 +106,29 @@ export async function renderVacationTimeline(
 ): Promise<Buffer> {
   const { width, padding, nameWidth, rowHeight, headerHeight, histogramHeight, legendGap, fonts } = style;
   const nameLabelWidth = nameWidth - 47;
+  const avatarLookupStartedAt = performance.now();
+  let avatarLookupFinishedAt = avatarLookupStartedAt;
+  const avatarDownloads: number[] = [];
   const employeeProfiles = Promise.all(month.employees.map(async (employee) => {
     const profile = profiles.get(employee.userId);
     const name = (profile?.name || employee.userId).replace(/\s+/g, " ").trim();
     const colorIndex = createHash("sha256").update(employee.userId).digest().readUInt32BE() % style.employees.length;
-    return { ...employee, name, color: style.employees[colorIndex], avatar: await avatars.get(profile?.avatarUrl) };
-  }));
+    const avatar = await avatars.get(profile?.avatarUrl, (durationMs) => avatarDownloads.push(durationMs));
+    return { ...employee, name, color: style.employees[colorIndex], avatar };
+  })).then((employees) => {
+    avatarLookupFinishedAt = performance.now();
+    if (employees.length > 0) {
+      logger.info("Vacation timeline avatar timings", {
+        month: month.month,
+        avatarLookupMs: Math.round(avatarLookupFinishedAt - avatarLookupStartedAt),
+        avatarDownloadAttempts: avatarDownloads.length,
+        slowestAvatarDownloadMs: Math.round(Math.max(0, ...avatarDownloads)),
+      });
+    }
+    return employees;
+  });
   const [employees] = await Promise.all([employeeProfiles, rendererReady ??= initWasm(rendererWasm)]);
+  const layoutStartedAt = performance.now();
   employees.sort((left, right) => left.name.localeCompare(right.name, "cs") || left.userId.localeCompare(right.userId));
   const employeeRows = employees.map((employee) => {
     const nameLines = employeeNameLines(employee.name);
@@ -201,14 +221,27 @@ export async function renderVacationTimeline(
   const height = legendTop + 29;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width * style.scale}" height="${height * style.scale}" viewBox="0 0 ${width} ${height}" font-family="${style.font}">${rect(0, 0, width, height, style.background, 18)}${elements.join("")}</svg>`;
   const renderer = new Resvg(svg, rendererOptions);
+  const rasterStartedAt = performance.now();
+  let encoding: Promise<Buffer>;
+  let encodingStartedAt: number;
   try {
     const image = renderer.render();
     try {
-      return Buffer.from(image.asPng());
+      encodingStartedAt = performance.now();
+      encoding = encodeVacationPng(image.width, image.height, image.pixels);
     } finally {
       image.free();
     }
   } finally {
     renderer.free();
   }
+  const png = await encoding;
+  logger.info("Vacation timeline renderer timings", {
+    month: month.month,
+    wasmWaitMs: Math.round(layoutStartedAt - avatarLookupFinishedAt),
+    svgLayoutMs: Math.round(rasterStartedAt - layoutStartedAt),
+    rasterizeMs: Math.round(encodingStartedAt - rasterStartedAt),
+    pngEncodeMs: Math.round(performance.now() - encodingStartedAt),
+  });
+  return png;
 }

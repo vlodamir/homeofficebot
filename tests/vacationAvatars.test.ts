@@ -17,14 +17,19 @@ test("avatar downloads are shared, reused from disk after restart, and refreshed
   context.after(() => rm(folder, { recursive: true, force: true }));
   const fetchMock = context.mock.method(globalThis, "fetch", async () => avatarResponse());
   const cache = new VacationAvatarCache(folder);
-  const [first, second] = await Promise.all([cache.get(avatarUrl), cache.get(avatarUrl)]);
+  const durations: number[] = [];
+  const recordDownload = (durationMs: number) => { durations.push(durationMs); };
+  const [first, second] = await Promise.all([cache.get(avatarUrl, recordDownload), cache.get(avatarUrl, recordDownload)]);
   assert.match(first ?? "", /^data:image\/png;base64,/);
   assert.equal(first, second);
   assert.equal(fetchMock.mock.callCount(), 1);
+  assert.equal(durations.length, 1);
+  assert.ok(durations[0] >= 0);
 
   const restarted = new VacationAvatarCache(folder);
-  assert.equal(await restarted.get(avatarUrl), first);
+  assert.equal(await restarted.get(avatarUrl, recordDownload), first);
   assert.equal(fetchMock.mock.callCount(), 1);
+  assert.equal(durations.length, 1);
   assert.ok(await restarted.get(updatedUrl));
   assert.equal(fetchMock.mock.callCount(), 2);
 });

@@ -69,7 +69,7 @@ test("month navigation crosses the year boundary in both directions", () => {
   assert.equal(shiftVacationMonth("2027-01", -1), "2026-12");
 });
 
-test("the renderer produces a double-width PNG with one row per employee across the month", async () => {
+test("the renderer produces a 2208px-wide PNG with one row per employee across the month", async () => {
   const month = "2026-11";
   const today = "2026-11-26";
   const empty = await renderVacationTimeline(buildVacationMonth(month, today, []), new Map());
@@ -77,8 +77,8 @@ test("the renderer produces a double-width PNG with one row per employee across 
   const png = await renderVacationTimeline(model, new Map([["U1", { name: 'Černý & <Co.> "Team"' }]]));
   assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
   assert.equal(png.subarray(12, 16).toString("ascii"), "IHDR");
-  assert.equal(png.readUInt32BE(16), 3312);
-  assert.equal(png.readUInt32BE(20) - empty.readUInt32BE(20), 111);
+  assert.equal(png.readUInt32BE(16), 2208);
+  assert.equal(png.readUInt32BE(20) - empty.readUInt32BE(20), 74);
 });
 
 test("the renderer embeds an available Slack profile avatar", async (context) => {

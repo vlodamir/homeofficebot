@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { performance } from "node:perf_hooks";
 import type { webApi } from "@slack/bolt";
 import { logger } from "./logger";
 import { VacationMonth } from "./vacationMonth";
@@ -176,7 +177,11 @@ export class VacationImageCache {
       if (oldest) await this.remove(...oldest);
     }
 
-    const fileId = await this.files.upload(month, await render());
+    const preparationStartedAt = performance.now();
+    const png = await render();
+    const uploadStartedAt = performance.now();
+    const fileId = await this.files.upload(month, png);
+    const uploadFinishedAt = performance.now();
     this.entries.set(key, { fileId, expiresAt: this.now() + CACHE_TTL_MS });
     try {
       await this.save();
@@ -185,6 +190,15 @@ export class VacationImageCache {
       throw error;
     }
     // Slack may not return the full file metadata immediately after completion.
-    return await this.files.getReference(fileId) ?? { id: fileId };
+    const lookupStartedAt = performance.now();
+    const reference = await this.files.getReference(fileId);
+    logger.info("Vacation timeline image timings", {
+      month,
+      pngBytes: png.byteLength,
+      prepareMs: Math.round(uploadStartedAt - preparationStartedAt),
+      slackUploadMs: Math.round(uploadFinishedAt - uploadStartedAt),
+      slackFileLookupMs: Math.round(performance.now() - lookupStartedAt),
+    });
+    return reference ?? { id: fileId };
   }
 }

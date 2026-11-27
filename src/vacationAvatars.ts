@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 
 const avatarMaxAgeMs = 7 * 24 * 60 * 60 * 1000;
 const maxAvatars = 128;
@@ -15,7 +16,7 @@ export class VacationAvatarCache {
 
   constructor(private readonly directory?: string) {}
 
-  async get(url?: string): Promise<string | undefined> {
+  async get(url?: string, onDownload?: (durationMs: number) => void): Promise<string | undefined> {
     if (!url) return;
     let source: URL;
     try {
@@ -29,27 +30,33 @@ export class VacationAvatarCache {
     const pending = this.inFlight.get(key);
     if (pending) return pending;
 
-    const result = this.readOrDownload(source, key).finally(() => this.inFlight.delete(key));
+    const result = this.readOrDownload(source, key, onDownload).finally(() => this.inFlight.delete(key));
     this.inFlight.set(key, result);
     return result;
   }
 
-  private async readOrDownload(source: URL, key: string): Promise<string | undefined> {
+  private async readOrDownload(source: URL, key: string, onDownload?: (durationMs: number) => void): Promise<string | undefined> {
     const path = this.directory && join(this.directory, `${key}.avatar`);
     if (path) {
       const cached = await this.read(path);
       if (cached) return cached;
     }
 
+    const downloadStartedAt = performance.now();
+    const avatar = await this.download(source);
+    onDownload?.(performance.now() - downloadStartedAt);
+    if (avatar && this.directory && path) await this.save(this.directory, path, avatar);
+    return avatar;
+  }
+
+  private async download(source: URL): Promise<string | undefined> {
     try {
       const response = await fetch(source, { signal: AbortSignal.timeout(1500), redirect: "error" });
       const mediaType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
       if (!response.ok || !mediaType || !["image/jpeg", "image/png", "image/gif"].includes(mediaType)) return;
       const input = Buffer.from(await response.arrayBuffer());
       if (input.length === 0 || input.length > maxImageBytes) return;
-      const avatar = `data:${mediaType};base64,${input.toString("base64")}`;
-      if (this.directory && path) await this.save(this.directory, path, avatar);
-      return avatar;
+      return `data:${mediaType};base64,${input.toString("base64")}`;
     } catch {
       return;
     }

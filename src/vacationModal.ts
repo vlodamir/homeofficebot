@@ -1,4 +1,5 @@
 import type { App, BlockAction, ButtonAction, types } from "@slack/bolt";
+import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import { getLocalDateInTimeZone } from "./date";
 import { logger } from "./logger";
@@ -151,11 +152,17 @@ export function registerVacationModal(
     const end = `${shiftVacationMonth(metadata.month, 1)}-01`;
     const entries = stateStore.getVacationsInRange(start, end);
     const month = buildVacationMonth(metadata.month, today, entries);
+    const profileLookupStartedAt = performance.now();
     const profiles = new Map(await Promise.all(month.employees.map(async ({ userId }) =>
       [userId, await getProfile(userId)] as const,
     )));
     let file: VacationSlackImage | undefined;
     if (month.employees.length > 0) {
+      logger.info("Vacation timeline profile timings", {
+        month: month.month,
+        profileCount: month.employees.length,
+        profileLookupMs: Math.round(performance.now() - profileLookupStartedAt),
+      });
       try {
         const key = vacationImageKey(metadata.workspace, botUserId, month, profiles);
         file = await cache.get(key, month.month, () => renderVacationTimeline(month, profiles, avatars));
